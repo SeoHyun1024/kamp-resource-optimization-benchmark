@@ -7,3 +7,6 @@ tensorflow
 keras
 ortools
 ipykernel
+xgboost
+shap
+catboost
