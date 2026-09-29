@@ -1,0 +1,4 @@
+,MAE,MSE,RMSE,MAE 개선율(vs Persistence)
+Persistence (lag_1),14.5208,565.3125,23.7763,0.0
+XGBoost,6.0623,75.9669,8.7159,0.5825
+LightGBM,6.6542,99.3234,9.9661,0.5418

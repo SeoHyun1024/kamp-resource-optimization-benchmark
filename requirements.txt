@@ -8,5 +8,6 @@ keras
 ortools
 ipykernel
 xgboost
+lightgbm
 shap
 catboost
