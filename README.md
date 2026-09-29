@@ -2,7 +2,7 @@
 
 KAMP 자원 최적화 데이터셋(`data/okm_augumented_2021.csv`, 2021-01-01 ~ 2021-09-14, 1시간 단위 6,168행)으로 제조공정의 최대수요전력을 분석한다.
 
-- 가이드북 모델(RNN, Random Forest)로 전력값을 **회귀** 예측한다.
+- 가이드북 부록의 데이터 품질지표(6대 지표)를 재현하고, 가이드북 모델(RNN, Random Forest)로 전력값을 **회귀** 예측한 뒤 LP로 인력배치를 최적화한다.
 - 이를 확장해, 다음 시점의 **전력 피크 위험 확률**을 예측하는 **분류** 모델(XGBoost, CatBoost)을 비교한다.
 
 ## 프로젝트 구조
@@ -12,8 +12,8 @@ data/
 └── okm_augumented_2021.csv        원본 데이터
 
 notebooks/
-├── 01_preprocessing.ipynb         전처리 + SimpleRNN (1시간 앞 전력 회귀)
-├── 02_random_forest.ipynb         Random Forest (다음 15분 전력 회귀) + OR-Tools 인력 최적화
+├── 01_preprocessing.ipynb         데이터 품질지표 + 전처리 + SimpleRNN (15분 전력 회귀)
+├── 02_random_forest.ipynb         Random Forest ('평균' 전력 회귀) + LP 인력배치 최적화
 ├── 03_xgboost.ipynb               피크 위험 분류: RF baseline vs XGBoost
 └── 04_catboost.ipynb              피크 위험 분류: CatBoost (03과 동일 조건)
 
@@ -27,8 +27,8 @@ models/                            학습된 분류 모델
 
 | 순서 | notebook | 읽는 파일 | 만드는 파일 |
 | --- | --- | --- | --- |
-| 1 | `01_preprocessing` | `data/okm_augumented_2021.csv` | `df_frame.csv`, `daily_data_seasonality*.csv`, `the_best_rnn_pred_168.csv` |
-| 2 | `02_random_forest` | `df_frame.csv` | — |
+| 1 | `01_preprocessing` | `data/okm_augumented_2021.csv` | `df_frame.csv`, `quality_metrics.txt`, `rnn_forecast_result.csv`, `rnn_metrics.txt`, `rnn_forecast_plot.png` |
+| 2 | `02_random_forest` | `data/okm_augumented_2021.csv` | `rf_metrics.txt`, `rf_feature_importance.csv`, `lp_optimization_result.csv`, `lp_metrics.txt` |
 | 3 | `03_xgboost` | `df_frame.csv` | `peak_dataset.csv`, `peak_baseline_probabilities.csv`, `peak_experiment_meta.json`, `xgboost_predictions.csv`, `model_comparison.csv`, `models/xgboost_classifier.*` |
 | 4 | `04_catboost` | 03의 산출물 | `catboost_predictions.csv`, `model_comparison.csv`(CatBoost 행 추가), `models/catboost_classifier.*` |
 
@@ -38,23 +38,51 @@ models/                            학습된 분류 모델
 
 ## 1. 전력 회귀 (가이드북 모델)
 
+### 데이터 품질지표 — `01_preprocessing.ipynb`
+
+가이드북 부록 4장의 산식으로 계산한다. 무결성은 가이드북에 공식이 없어, 측정 가능한 4개 지표의 단순평균으로 근사했다(우리 정의).
+
+| 지표 | 가이드북 참고값 | 보정 전 | 보정 후 |
+| --- | --- | --- | --- |
+| 완전성 | 99.68 ~ 100% | 99.98% | 99.98% |
+| 유일성 | 99.69% | 100.00% | 100.00% |
+| 유효성 | 100.00% | 99.22% | 100.00% |
+| 일관성 | 100.00% | 100.00% | 100.00% |
+| 무결성(근사) | — | — | 99.995% |
+
+- 유효성 보정: `시간` 컬럼이 깨진 48행(2021-07-13, 07-15)을 날짜별 행 순서로 0~23시로 재구성했다. 보정 결과는 `df_frame.csv`에 반영된다.
+
 ### SimpleRNN — `01_preprocessing.ipynb`
 
-- 과거 168시간(7일 × 24시간)의 15분 최대수요전력으로 **1시간 뒤** 값을 예측한다.
-- test 구간(2021-09-01 ~ 09-14)의 각 시점마다, 실제로 관측된 과거 값을 입력으로 쓴다(1-step-ahead). 168시간을 한 번에 예측하는 것이 아니다.
-- 분할: train ~ 2021-08-17 / validation 2021-08-18 ~ 08-31 (early stopping) / test 2021-09-01 ~ 09-14
+- 과거 168시간(t-1 ~ t-168)의 15분 최대수요전력으로 **다음 시점** 값을 예측한다. 입력 형태는 (168 타임스텝, 1 피처).
+- 분할: 마지막 336시간(2021-09-01 ~ 09-14)을 test, 나머지를 train으로 쓴다. early stopping은 train loss 기준(patience 5)이다.
+- 구조: SimpleRNN(64) → Dense(32, relu) → Dense(1). 가이드북에 레이어 구성이 없어 통상적인 구조로 재현했다.
 
-| test (9/1 ~ 9/14) | MAE | RMSE |
+| test (9/1 ~ 9/14) | MSE | RMSE |
 | --- | --- | --- |
-| **SimpleRNN** | **7.87** | **12.09** |
-| 1주 전 같은 시각 값 | 9.19 | 13.14 |
-| 1시간 전 값 | 19.99 | 29.06 |
+| SimpleRNN | 220.22 | 14.84 |
+
+- 같은 test 구간에서 "1주 전 같은 시각 값" 기준선의 RMSE는 13.14로, **이 구성의 RNN은 기준선보다 나쁘다.**
 
 ### Random Forest — `02_random_forest.ipynb`
 
-- 현재 15분 전력과 시간·기상·달력 변수로 **다음 15분** 전력을 예측한다. 분할은 시간순으로 70% / 30%다.
-- test MAE는 8.58로, **직전 값을 그대로 쓰는 기준선(7.93)보다 나쁘다.** 입력 정보가 부족해 구조적으로 한계가 있다.
-- 예측값은 OR-Tools 선형계획(주/야간, 투입 인원)의 입력으로 쓰인다.
+- 타깃은 `평균`. 누수를 막기 위해 15분/30분/45분/60분과 `날짜`를 피처에서 뺐다.
+- 결측치: 풍속·강수량은 보간, 공장인원은 0으로 채운다. `시간` 이상치는 01과 같은 방식으로 보정한다.
+- 분할: 2021-09-01 ~ 09-14(336시간) test / 나머지 train. `RandomForestRegressor(n_estimators=100)`
+
+| | MSE | 가이드북 참고값 |
+| --- | --- | --- |
+| train | 23.25 | 185.98 |
+| test | 130.82 | 183.06 |
+
+- 변수중요도는 생산량(0.38) > 공장인원(0.25) > 시간(0.11) 순이다.
+
+### LP 인력배치 최적화 — `02_random_forest.ipynb`
+
+가이드북이 공개한 제약조건(`1 <= P_electric <= 2`, `1 <= P_human <= 75`, `11 <= 2*P_electric + P_human <= 95`)을 `scipy.optimize.linprog`(HiGHS)로 푼다.
+
+- **Part A (가이드북 그대로)**: 목적함수 `P_human + P_electric`. 해는 P_electric 2, P_human 7, Cost 9다. 가이드북 예시(공장직원 5.0명, 최종값 610.42)와 다르며, 가이드북이 생산량을 LP에 연결하는 방식을 공개하지 않아 동일 재현은 불가능하다.
+- **Part B (우리의 확장, 참고용)**: 목적함수 계수를 각 시간의 `전기요금(계절)`, `인건비`로 바꿔 6,168개 시간마다 LP를 푼다. 모든 시간에서 P_electric 1, P_human 9가 나오며 합산 최소비용은 1,076,826.9다.
 
 ## 2. 피크 위험 분류 — `03_xgboost.ipynb`, `04_catboost.ipynb`
 
@@ -103,7 +131,7 @@ models/                            학습된 분류 모델
 
 ## 데이터 주의사항
 
-- **`시간` 컬럼 오류**: 2021-07-13, 07-15 이틀치 `시간` 값이 70~188로 깨져 있다. 하루 24행은 유지되어 있어, 시각은 날짜와 하루 안의 행 순서로 만든다.
+- **`시간` 컬럼 오류**: 2021-07-13, 07-15 이틀치 `시간` 값이 70~188로 깨져 있다. 하루 24행은 유지되어 있어, 01에서 날짜별 행 순서로 0~23시를 다시 채워 `df_frame.csv`에 저장한다.
 - **복사된 구간**: 증강 데이터라 이전 달의 구간이 다른 날짜에 그대로 복사되어 있다. 한 시간의 15분 값 4개 조합이 이전 달에도 존재하는 비율은 6월 96%, 8월 27%, 9월 19%다.
   - 1~7월을 검증에 쓰면 모델이 복사본을 외운 것까지 성능으로 잡힌다.
   - 모델 평가는 9월 test 구간을 기준으로 본다.

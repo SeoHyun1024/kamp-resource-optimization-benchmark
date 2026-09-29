@@ -1,0 +1,10 @@
+completeness=99.9811
+uniqueness=100.0000
+validity_before_fix=99.2218
+validity_after_fix=100.0000
+consistency=100.0000
+integrity_approx=99.9953
+missing_cells=21
+duplicate_rows=0
+time_anomaly_dates=[np.int64(20210713), np.int64(20210715)]
+time_anomaly_rows_fixed=48

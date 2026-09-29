@@ -1,0 +1,6 @@
+static_cost=9.0000
+static_P_human=7.0
+static_P_electric=2.0
+batch_total_cost=1076826.9000
+batch_mean_P_human=9.0000
+batch_mean_P_electric=1.0000

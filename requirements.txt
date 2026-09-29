@@ -5,7 +5,7 @@ seaborn
 scikit-learn
 tensorflow
 keras
-ortools
+scipy
 ipykernel
 xgboost
 lightgbm
