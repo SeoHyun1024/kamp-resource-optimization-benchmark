@@ -27,7 +27,7 @@ models/                            학습된 분류 모델
 
 | 순서 | notebook | 읽는 파일 | 만드는 파일 |
 | --- | --- | --- | --- |
-| 1 | `01_preprocessing` | `data/okm_augumented_2021.csv` | `df_frame.csv`, `quality_metrics.txt`, `rnn_forecast_result.csv`, `rnn_metrics.txt`, `rnn_forecast_plot.png` |
+| 1 | `01_preprocessing` | `data/okm_augumented_2021.csv` | `df_frame.csv`, `quality_metrics.txt`, `rnn_forecast_result.csv`, `rnn_metrics.txt`, `rnn_comparison.csv`, `rnn_*_plot.png` |
 | 2 | `02_random_forest` | `data/okm_augumented_2021.csv` | `rf_metrics.txt`, `rf_feature_importance.csv`, `lp_optimization_result.csv`, `lp_metrics.txt` |
 | 3 | `03_xgboost` | `df_frame.csv` | `peak_dataset.csv`, `peak_baseline_probabilities.csv`, `peak_experiment_meta.json`, `xgboost_predictions.csv`, `model_comparison.csv`, `models/xgboost_classifier.*` |
 | 4 | `04_catboost` | 03의 산출물 | `catboost_predictions.csv`, `model_comparison.csv`(CatBoost 행 추가), `models/catboost_classifier.*` |
@@ -54,15 +54,24 @@ models/                            학습된 분류 모델
 
 ### SimpleRNN — `01_preprocessing.ipynb`
 
-- 과거 168시간(t-1 ~ t-168)의 15분 최대수요전력으로 **다음 시점** 값을 예측한다. 입력 형태는 (168 타임스텝, 1 피처).
-- 분할: 마지막 336시간(2021-09-01 ~ 09-14)을 test, 나머지를 train으로 쓴다. early stopping은 train loss 기준(patience 5)이다.
-- 구조: SimpleRNN(64) → Dense(32, relu) → Dense(1). 가이드북에 레이어 구성이 없어 통상적인 구조로 재현했다.
+과거 168시간(t-1 ~ t-168)의 15분 최대수요전력으로 **1시간 뒤** 값을 예측한다. test는 마지막 336시간(2021-09-01 ~ 09-14)이며, 각 시점마다 실제 관측된 과거 값을 입력으로 쓴다(1-step-ahead).
+같은 lag 피처와 test 구간으로 두 가지 방식을 비교한다.
 
-| test (9/1 ~ 9/14) | MSE | RMSE |
+| | 5장: 가이드북 재현 | 7장: 이전 방식 보완 |
 | --- | --- | --- |
-| SimpleRNN | 220.22 | 14.84 |
+| 입력 | (168 타임스텝, 1), 최신 → 과거 | (7일, 24시간), 과거 → 최신 |
+| 구조 | SimpleRNN(64) → Dense(32) → Dense(1) | SimpleRNN(50) → Dense(1) |
+| early stopping | train loss, patience 5 | validation(2021-08-18 ~ 08-31) loss, patience 30 |
 
-- 같은 test 구간에서 "1주 전 같은 시각 값" 기준선의 RMSE는 13.14로, **이 구성의 RNN은 기준선보다 나쁘다.**
+| test (9/1 ~ 9/14) | MAE | MSE | RMSE |
+| --- | --- | --- | --- |
+| **SimpleRNN (7장, 이전 방식 보완)** | **7.87** | **146.05** | **12.09** |
+| SimpleRNN (5장, 가이드북 재현) | 15.91 | 386.57 | 19.66 |
+| 1주 전 같은 시각 값 | 9.19 | 172.70 | 13.14 |
+| 1시간 전 값 | 19.99 | 844.30 | 29.06 |
+
+- 가이드북 재현 방식은 검증 기준 없이 train loss로 학습을 멈춰 "1주 전 같은 시각" 기준선보다 나쁘다. validation으로 early stopping을 하는 보완 방식은 기준선보다 MAE가 약 14% 낮다.
+- 두 모델 모두 `keras.utils.set_random_seed(42)` + op determinism으로 재실행 결과를 고정했다.
 
 ### Random Forest — `02_random_forest.ipynb`
 
