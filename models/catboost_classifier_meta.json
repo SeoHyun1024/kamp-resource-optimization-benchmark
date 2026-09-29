@@ -1,0 +1,52 @@
+{
+  "peak_quantile": 0.9,
+  "peak_threshold": 179.0,
+  "classification_threshold": 0.8,
+  "encoding": "A_categorical",
+  "cat_features": [
+    "hour",
+    "day_of_week",
+    "month",
+    "Weekend",
+    "Vacation"
+  ],
+  "params": {
+    "depth": 6,
+    "learning_rate": 0.03,
+    "l2_leaf_reg": 3.0,
+    "auto_class_weights": "Balanced"
+  },
+  "iterations": 384,
+  "features": [
+    "lag_1",
+    "lag_2",
+    "lag_3",
+    "lag_6",
+    "lag_12",
+    "lag_24",
+    "lag_48",
+    "lag_168",
+    "q15_lag1",
+    "q30_lag1",
+    "q45_lag1",
+    "q60_lag1",
+    "avg_lag1",
+    "roll_mean_3",
+    "roll_mean_24",
+    "roll_max_24",
+    "roll_std_24",
+    "production",
+    "temperature",
+    "wind_speed",
+    "humidity",
+    "precipitation",
+    "elec_price",
+    "workers",
+    "labor_cost",
+    "hour",
+    "day_of_week",
+    "month",
+    "Weekend",
+    "Vacation"
+  ]
+}
