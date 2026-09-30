@@ -254,6 +254,16 @@ def build_features(df: pd.DataFrame) -> tuple[pd.DataFrame, list[str]]:
     return ds, features
 
 
+def add_cyclic_calendar(ds: pd.DataFrame, features: list[str]) -> tuple[pd.DataFrame, list[str]]:
+    """hour·day_of_week의 sin/cos 4개 컬럼을 추가한다 (정수 컬럼은 유지 = 'int+cyclic').
+    ablation_encoding.py 결과 RF는 이 방식이 CV PR-AUC 최고(0.889 vs 정수만 0.882)라 02에서 사용."""
+    out = ds.assign(
+        hour_sin=np.sin(2 * np.pi * ds["hour"] / 24), hour_cos=np.cos(2 * np.pi * ds["hour"] / 24),
+        dow_sin=np.sin(2 * np.pi * ds["day_of_week"] / 7), dow_cos=np.cos(2 * np.pi * ds["day_of_week"] / 7),
+    )
+    return out, features + ["hour_sin", "hour_cos", "dow_sin", "dow_cos"]
+
+
 def peak_threshold_legacy(df: pd.DataFrame) -> float:
     """기존 노트북과 같은 정의: 2021-01-08 ~ 07-31 target의 90% quantile."""
     window = df.loc[(df.index >= LEGACY_TRAIN_START) & (df.index < LEGACY_VAL_START), "power"]
