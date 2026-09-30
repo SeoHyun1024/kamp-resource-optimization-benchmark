@@ -61,7 +61,7 @@ DATA_PATH = next((p for p in _CANDIDATES if os.path.exists(p)), None)
 if DATA_PATH is None:
     raise FileNotFoundError("okm_augumented_2021.csv 를 찾지 못했습니다. 다음 중 한 곳에 두세요:\n  " + "\n  ".join(_CANDIDATES))
 RESULTS_DIR = os.path.join(BASE_DIR, "results")
-_OUT_DIRS = {"pred": "2_test_predictions", "cmp": "3_comparison", "detail": "4_model_details", "fig": "6_figures"}
+_OUT_DIRS = {"pred": "2_test_predictions", "cmp": "3_comparison", "detail": "4_model_details", "model": "5_models", "fig": "6_figures"}
 
 
 def out(kind, name):
@@ -173,6 +173,7 @@ def make_xy(cfg, rows, fit_rows):
     X = np.stack([scaled[r - N_LAGS: r] for r in rows])
     if cfg["shape"] == "7x24":
         X = X[:, :, 0].reshape(-1, 7, 24)   # 과거->최신 순 (7일, 24시간)
+    make_xy.last_sx = sx  # 최종 모델 저장 시 입력 스케일러도 함께 남기기 위해
     return X, sy.transform(y_all[rows].reshape(-1, 1)).ravel(), sy
 
 
@@ -239,6 +240,7 @@ train_part, test_part = samples.loc[samples.index < TEST_START], samples.loc[sam
 keras.utils.set_random_seed(SEED)
 tr_rows, te_rows = rows_of(train_part), rows_of(test_part)
 Xtr, ytr, sy = make_xy(cfg, tr_rows, tr_rows)
+sx_final = make_xy.last_sx
 Xte, _, _ = make_xy(cfg, te_rows, tr_rows)
 model = build(cfg, Xtr.shape[1:])
 model.fit(Xtr, ytr, epochs=n_epochs, batch_size=BATCH, verbose=0)
@@ -273,6 +275,36 @@ pred_table.to_csv(out("pred", f"{TAG}_forecast.csv"), index=False)
 with open(out("cmp", f"{TAG}_metrics.txt"), "w") as f:
     f.write("\n".join(lines) + "\n")
 print(f"\n[정보] 저장: results/2_test_predictions/{TAG}_forecast.csv, results/3_comparison/{TAG}_metrics.txt")
+
+# 최종 모델 + 스케일러 + 메타데이터 저장 (results/5_models/) ---------------------------------
+import json
+import platform
+import joblib
+
+model.save(out("model", f"{TAG}.keras"))
+joblib.dump({"x_scaler": sx_final, "y_scaler": sy}, out("model", f"{TAG}_scalers.joblib"))
+channel_names = ([TARGET] if cfg["channels"] == "uni" else
+                 ["power", "15분", "60분", "생산량", "hour_sin", "hour_cos", "dow_sin", "dow_cos"])
+meta = {
+    "model": TAG, "model_file": f"{TAG}.keras", "scaler_file": f"{TAG}_scalers.joblib",
+    "script": "01_rnn.py", "task": f"다음 시간 {TARGET} 예측" + (" + cutoff로 피크 판정" if TARGET == "power" else ""),
+    "variant": best_name, "architecture": {k: v for k, v in cfg.items()},
+    "input": f"T-{N_LAGS} ~ T-1 시퀀스, 채널 = {channel_names}",
+    "input_shape": list(Xtr.shape[1:]), "channels": channel_names,
+    "scaling": "MinMaxScaler (입력 채널별 x_scaler, target y_scaler), 학습 구간(9/1 이전)으로만 fit",
+    "epochs": n_epochs, "batch_size": BATCH, "optimizer": "Adam(lr=1e-3)", "loss": "mse",
+    "peak_threshold": peak_thr,
+    "train_period": [str(train_part.index.min()), str(train_part.index.max())],
+    "test_period": [str(test_part.index.min()), str(test_part.index.max())],
+    "seed": SEED, "python": platform.python_version(), "tensorflow": tf.__version__,
+    "test": {"MAE": float(table.iloc[-1]["MAE"]), "RMSE": float(table.iloc[-1]["RMSE"])},
+}
+if TARGET == "power":
+    meta.update({"decision_rule": f"predict >= {cutoff}", "peak_cutoff": cutoff,
+                 "test": {**meta["test"], **{k: round(float(v), 4) for k, v in s.items()}}})
+with open(out("model", f"{TAG}_meta.json"), "w", encoding="utf-8") as f:
+    json.dump(meta, f, ensure_ascii=False, indent=2, default=str)
+print(f"[정보] 모델 저장: results/5_models/{TAG}.keras + {TAG}_scalers.joblib + {TAG}_meta.json")
 
 # 시각화 --------------------------------------------------------------------------
 import matplotlib

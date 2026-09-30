@@ -64,6 +64,13 @@ test_proba = rf.predict_proba(test_df[FEATURES])[:, 1]
 metrics = cm.save_results("random_forest", test_df, test_proba, threshold,
                           extra={"method": f"{best_params}, calendar={CALENDAR_ENCODING}", "cv_PR-AUC": best["cv_PR-AUC"], "cv_F1": best["cv_F1"]})
 print(f"\n=== Test (2021-09-01~09-14) ===\n[random_forest] {cm.fmt(metrics)}")
+cm.save_model("random_forest", rf, {
+    "script": "02_random_forest.py", "task": "피크 위험 확률 분류",
+    "decision_rule": f"predict_proba[:, 1] >= {threshold}", "classification_threshold": threshold,
+    "calendar_encoding": CALENDAR_ENCODING, "features": FEATURES,
+    "params": {**best_params, "n_estimators": N_TREES},
+    "cv": {"PR-AUC": best["cv_PR-AUC"], "F1": best["cv_F1"]}, "test": cm.test_summary(metrics),
+})
 
 imp = pd.Series(rf.feature_importances_, index=FEATURES).sort_values(ascending=False)
 imp.to_csv(cm.out("detail", "random_forest_importance.csv"), header=["importance"])

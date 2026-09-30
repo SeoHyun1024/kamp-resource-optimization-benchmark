@@ -109,6 +109,14 @@ for key, spec in MODELS.items():
     print(f"[{key}] {params}, n={n_final} | CV MAE {best['cv_MAE']:.3f} | "
           f"test MAE {rows[-1]['MAE']:.3f}, RMSE {rows[-1]['RMSE']:.3f}, 피크시간 MAE {rows[-1]['peak_hour_MAE']:.2f}")
     print(f"    피크 판정(예측 >= {cutoff:.0f}): {cm.fmt(m)}")
+    cm.save_model(key, model, {
+        "script": "06_regression.py", "task": "다음 시간 power 회귀 + cutoff로 피크 판정",
+        "target": "target_power (연속값)", "decision_rule": f"predict(X) >= {cutoff}", "peak_cutoff": cutoff,
+        "calendar_encoding": "int", "features": FEATURES,
+        "params": {**params, "n_estimators": n_final},
+        "cv": {"MAE": float(best["cv_MAE"]), "F1": float(max(f1s))},
+        "test": {**cm.test_summary(m), "MAE": float(rows[-1]["MAE"]), "RMSE": float(rows[-1]["RMSE"])},
+    })
 
 table = pd.DataFrame(rows).set_index("Model")
 base = table.loc["Persistence (lag_1)", "MAE"]

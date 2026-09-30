@@ -62,6 +62,8 @@ def fit_score(exp, tr, frames):
             low = f["lag_1"].to_numpy() < np.median(fit["lag_1"])
             s = np.where(low, s.min() - 1.0, s)
         out.append(s)
+    fit_score.last = {"model": model, "features": cfg["features"], "n_fit_rows": len(fit),
+                      "lag1_median": float(np.median(fit["lag_1"])), "directional": cfg["directional"]}
     return out  # [train_score, *frame_scores]
 
 
@@ -99,6 +101,20 @@ for exp, name in [(best_exp, "isolation_forest"), ("A_all_features", "isolation_
                                "cv_F1": float(cv_table.set_index('experiment').loc[exp, 'cv_F1'])})
     print(f"\n[{name}] {cm.fmt(m)}")
     if name == "isolation_forest":
+        info = fit_score.last
+        cm.save_model("isolation_forest", info["model"], {
+            "script": "05_isolation_forest.py", "task": "비지도 이상탐지 (라벨은 설정 선택에만 사용)",
+            "experiment": exp, "features": info["features"],
+            "fit_rows": "prev_day_off == 0 & 8 <= hour <= 18" if exp.startswith("C_") else "all train rows",
+            "n_fit_rows": info["n_fit_rows"],
+            "score": "-decision_function(X)" + (f"; lag_1 < {info['lag1_median']} 이면 최저 점수로 보정" if info["directional"] else ""),
+            "lag1_median": info["lag1_median"],
+            "decision_rule": f"score >= {cut} (train score 상위 {q:.0%})", "score_cut": cut, "train_quantile": q,
+            "params": IF_PARAMS,
+            "cv": {"PR-AUC": float(cv_table.set_index('experiment').loc[exp, 'cv_PR-AUC']),
+                   "F1": float(cv_table.set_index('experiment').loc[exp, 'cv_F1'])},
+            "test": cm.test_summary(m),
+        })
         flagged = test_df.loc[s_te >= cut]
         print(f"이상 판정 {len(flagged)}건 중 실제 피크 {int(flagged['label'].sum())}건, "
               f"판정 시각 hour 분포 {flagged['hour'].value_counts().sort_index().to_dict()}")

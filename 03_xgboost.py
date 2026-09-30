@@ -71,7 +71,15 @@ metrics = cm.save_results("xgboost", test_df, test_proba, threshold,
                           extra={"method": f"{best_params}, n_estimators={n_final}",
                                  "cv_PR-AUC": best["cv_PR-AUC"], "cv_F1": best["cv_F1"]})
 print(f"\n=== Test (2021-09-01~09-14) ===\n[xgboost] {cm.fmt(metrics)}")
-xgb.save_model(cm.out("model", "xgboost_classifier.json"))
+p = dict(best_params); use_spw = p.pop("use_spw")
+cm.save_model("xgboost_classifier", xgb, {
+    "script": "03_xgboost.py", "task": "피크 위험 확률 분류",
+    "decision_rule": f"predict_proba[:, 1] >= {threshold}", "classification_threshold": threshold,
+    "calendar_encoding": "int", "features": FEATURES,
+    "params": {**p, "n_estimators": n_final, "scale_pos_weight": spw(train_df) if use_spw else 1.0,
+               "subsample": 0.8, "colsample_bytree": 0.8},
+    "cv": {"PR-AUC": best["cv_PR-AUC"], "F1": best["cv_F1"]}, "test": cm.test_summary(metrics),
+}, kind="xgboost")
 
 gain = xgb.get_booster().get_score(importance_type="gain")
 imp = pd.Series({f: gain.get(f, 0.0) for f in FEATURES}).sort_values(ascending=False)

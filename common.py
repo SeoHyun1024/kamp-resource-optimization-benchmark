@@ -145,3 +145,37 @@ def save_oof(name: str, ds: pd.DataFrame, y, score) -> None:
     """선택된 조합의 CV out-of-fold 예측 저장 (07_compare.py 앙상블 threshold 선택용)."""
     idx = pd.DatetimeIndex(np.concatenate([va.index.to_numpy() for _, _, va in cv_folds(ds)]), name="Date")
     pd.DataFrame({"label": np.asarray(y), "score": np.asarray(score)}, index=idx).to_csv(out("detail", f"{name}_oof.csv"))
+
+
+def save_model(name: str, model, meta: dict, kind: str = "joblib") -> None:
+    """학습된 최종 모델 + 메타데이터를 results/5_models/ 에 저장한다.
+    kind: "joblib"(sklearn 등) · "xgboost"(.json) · "catboost"(.cbm)
+    메타데이터 = 모델을 다시 쓰는 데 필요한 정보(판정 기준, feature 순서, 파라미터, 학습 기간, 성능)."""
+    import json
+    import platform
+    import joblib
+
+    if kind == "xgboost":
+        path = out("model", f"{name}.json"); model.save_model(path)
+    elif kind == "catboost":
+        path = out("model", f"{name}.cbm"); model.save_model(path)
+    else:
+        path = out("model", f"{name}.joblib"); joblib.dump(model, path)
+    full = {
+        "model": name,
+        "model_file": os.path.basename(path),
+        "peak_threshold": 179.0,
+        "label_rule": "power_T = max(15분,30분,45분,60분) >= peak_threshold -> 1",
+        "train_period": ["2021-01-15 00:00", "2021-08-31 23:00"],
+        "test_period": ["2021-09-01 00:00", "2021-09-14 23:00"],
+        "seed": SEED,
+        "python": platform.python_version(),
+        **meta,
+    }
+    with open(out("model", f"{name}_meta.json"), "w", encoding="utf-8") as f:
+        json.dump(full, f, ensure_ascii=False, indent=2, default=lambda o: o.item() if hasattr(o, "item") else str(o))
+    print(f"[정보] 모델 저장: results/5_models/{os.path.basename(path)} + {name}_meta.json")
+
+
+def test_summary(m: dict) -> dict:
+    return {k: round(float(m[k]), 4) for k in ["Precision", "Recall", "F1", "ROC-AUC", "PR-AUC"]}

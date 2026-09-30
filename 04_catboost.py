@@ -70,7 +70,14 @@ metrics = cm.save_results("catboost", test_df, test_proba, threshold,
                           extra={"method": f"{best_params}, iterations={n_final}",
                                  "cv_PR-AUC": best["cv_PR-AUC"], "cv_F1": best["cv_F1"]})
 print(f"\n=== Test (2021-09-01~09-14) ===\n[catboost] {cm.fmt(metrics)}")
-cb.save_model(cm.out("model", "catboost_classifier.cbm"))
+cm.save_model("catboost_classifier", cb, {
+    "script": "04_catboost.py", "task": "피크 위험 확률 분류",
+    "decision_rule": f"predict_proba[:, 1] >= {threshold}", "classification_threshold": threshold,
+    "calendar_encoding": "categorical (hour, day_of_week -> string, cat_features)",
+    "cat_features": CAT, "features": FEATURES,
+    "params": {**best_params, "iterations": n_final},
+    "cv": {"PR-AUC": best["cv_PR-AUC"], "F1": best["cv_F1"]}, "test": cm.test_summary(metrics),
+}, kind="catboost")
 
 imp = pd.Series(cb.get_feature_importance(pool(train_df), type="ShapValues")[:, :-1].__abs__().mean(axis=0),
                 index=FEATURES).sort_values(ascending=False)
