@@ -19,13 +19,14 @@ kamp/
 ├─ 07_compare.py                # 앙상블 + 전체 비교표 + 부트스트랩 신뢰구간
 ├─ ablation_copied_days.py      # (선택) 복제일 처리 방식 비교 실험
 ├─ ablation_missing.py          # (선택) 결측 처리 방식별 성능 비교 실험
+├─ ablation_encoding.py         # (선택) RF·XGBoost 달력 변수 인코딩 비교 실험
 ├─ requirements.txt
 └─ results/                     # 실행하면 자동 생성
    ├─ 1_preprocessing/          # 전처리 결과
    ├─ 2_test_predictions/       # 테스트데이터 예측결과 (제출용)
    ├─ 3_comparison/             # 모델 성능 비교표
    ├─ 4_model_details/          # CV 탐색표·OOF 예측·변수 중요도
-   ├─ 5_models/                 # 학습된 모델 파일
+   ├─ 5_models/                 # 학습된 모델 파일 + 메타데이터 json (모델 7종)
    └─ 6_figures/                # 그림
 ```
 
@@ -38,10 +39,10 @@ Python 3.11 기준입니다.
 pip install -r requirements.txt
 
 # 1. 전처리
-python preprocessing.py
+python preprocessing.py                               # → results/1_preprocessing/
 
-# 2. 모델 학습·평가
-python 01_rnn.py --variant D_multi_gru --epochs 90   # 약 10~15분
+# 2. 모델 학습·평가 (01~06은 서로 독립)
+python 01_rnn.py --variant D_multi_gru --epochs 90   # 약 10~15분 (옵션 없이 실행하면 구조 4종 CV 포함 약 1시간)
 python 02_random_forest.py                            # 약 2분
 python 03_xgboost.py                                  # 약 30초
 python 04_catboost.py                                 # 약 1분
@@ -49,13 +50,15 @@ python 05_isolation_forest.py                         # 약 10초
 python 06_regression.py                               # 약 1~2분
 
 # 3. 전체 비교 (반드시 마지막)
-python 07_compare.py
+python 07_compare.py                                  # → results/3_comparison/final_comparison.csv
 
 # 4. (선택) 보조 실험
-python ablation_copied_days.py   # 약 1분
-python ablation_missing.py       # 약 4분
-python ablation_encoding.py      # 약 1분
+python ablation_copied_days.py   # 복제일 처리 비교, 약 1분
+python ablation_missing.py       # 결측 처리 비교, 약 4분
+python ablation_encoding.py      # 달력 인코딩 비교, 약 1분
 ```
+
+- 다시 실행하면 `results/`의 같은 이름 파일은 덮어써집니다. `07_compare.py`는 02~04의 결과로 앙상블을 만들므로 앞 스크립트를 다시 돌렸다면 함께 다시 실행합니다.
 
 - 모든 스크립트는 `kamp` 폴더에서 실행합니다.
 - 시드는 42로 고정했습니다. 다만 CPU나 라이브러리 버전에 따라 소수점 수준의 차이는 날 수 있습니다.
@@ -64,36 +67,56 @@ python ablation_encoding.py      # 약 1분
 
 원자료를 진단한 결과와 처리 방법입니다. 실행 로그는 `results/1_preprocessing/preprocessing_report.txt`에 남습니다.
 
-| 항목          | 진단 결과                                                         | 처리                                                                                                                                                                                             |
-| ------------- | ----------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| 결측치        | 풍속 3건, 강수량 1건, 공장인원 17건                               | 풍속·강수량은 시간 보간. 공장인원은 결측 행이 전부 생산량 0 구간임을 확인한 뒤 0으로 채움. 보간·직전값·0·모델 내장 처리 4가지를 비교했는데 성능 차이가 없어 보간을 유지함(`ablation_missing.py`) |
-| `시간` 이상치 | 2021-07-13, 07-15 두 날의 48행이 0~23 범위를 벗어남(70~188)       | 두 날 모두 24행이 온전하므로 날짜 안의 행 순서로 0~23시를 재구성                                                                                                                                 |
-| 증강 복제일   | 257일 중 115일이 앞선 날의 15분 값 96개와 완전히 같음. 모두 1~7월 | 행은 유지하고 `is_copied_day` 플래그만 만듦. CV 검증 구간은 복제가 없는 7·8월로 잡음. 학습에서 빼면 CV 성능이 떨어져(`ablation_copied_days.py`) 학습에는 포함                                    |
-| 공휴일        | 1/1, 설, 3/1, 5/5, 5/19, 8/16이 모두 가동일(일 최대전력 108~195)  | 공휴일 변수를 쓰지 않음                                                                                                                                                                          |
-| 주말          | 토요일 37일 중 35일 가동                                          | 주말 변수 대신 `day_of_week` 사용                                                                                                                                                                |
-| `month`       | test(9월)가 학습 데이터에 없는 값                                 | 사용하지 않음                                                                                                                                                                                    |
+| 항목 | 진단 결과 | 처리 |
+|---|---|---|
+| 결측치 | 풍속 3건, 강수량 1건, 공장인원 17건 | 풍속·강수량은 시간 보간. 공장인원은 결측 행이 전부 생산량 0 구간임을 확인한 뒤 0으로 채움. 보간·직전값·0·모델 내장 처리 4가지를 비교했는데 성능 차이가 없어 보간을 유지함(`ablation_missing.py`) |
+| `시간` 이상치 | 2021-07-13, 07-15 두 날의 48행이 0~23 범위를 벗어남(70~188) | 두 날 모두 24행이 온전하므로 날짜 안의 행 순서로 0~23시를 재구성 |
+| 증강 복제일 | 257일 중 115일이 앞선 날의 15분 값 96개와 완전히 같음. 모두 1~7월 | 행은 유지하고 `is_copied_day` 플래그만 만듦. CV 검증 구간은 복제가 없는 7·8월로 잡음. 학습에서 빼면 CV 성능이 떨어져(`ablation_copied_days.py`) 학습에는 포함 |
+| 공휴일 | 1/1, 설, 3/1, 5/5, 5/19, 8/16이 모두 가동일(일 최대전력 108~195) | 공휴일 변수를 쓰지 않음 |
+| 주말 | 토요일 37일 중 35일 가동 | 주말 변수 대신 `day_of_week` 사용 |
+| `month` | test(9월)가 학습 데이터에 없는 값 | 사용하지 않음 |
+| 달력 인코딩 | 정수·one-hot·sin/cos·정수+sin/cos를 RF·XGBoost로 비교. one-hot이 가장 나쁨(CV PR-AUC −0.006~−0.012) | 모델별로 선택: RF 정수+sin/cos, XGBoost 정수, CatBoost 범주형, RNN sin/cos (`ablation_encoding.py`) |
 
 **예측 대상**
-
 - `power` = max(15분, 30분, 45분, 60분): 해당 시간의 최대수요전력입니다.
 - 피크 라벨은 `power ≥ 179`입니다. 179는 2021-01-08~07-31 `power`의 90% 분위수예요.
 
 ## Feature (38개, 모두 T−1 시점까지의 정보)
 
-| 그룹                    | Feature                                                                                     |
-| ----------------------- | ------------------------------------------------------------------------------------------- |
-| 전력 lag                | `lag_1, 2, 3, 6, 12, 24, 48, 167, 168, 169, 336`                                            |
+| 그룹 | Feature |
+|---|---|
+| 전력 lag | `lag_1, 2, 3, 6, 12, 24, 48, 167, 168, 169, 336` |
 | 직전 1시간 15분 단위 값 | `q15_lag1`, `q30_lag1`, `q45_lag1`, `q60_lag1`, `avg_lag1`, `intra_hour_slope`(60분 − 15분) |
-| 추세·통계               | `diff_1`, `roll_mean_3`, `roll_mean_24`, `roll_max_24`, `roll_std_24`, `max_since_midnight` |
-| 주간 패턴               | `same_hour_2w_mean`, `same_hour_2w_max`, `last_op_day_same_hour`(직전 가동일 같은 시각)     |
-| 전일 상태               | `prev_day_max`, `prev_day_off`                                                              |
-| 외생변수(1시간 전)      | 생산량, 기온, 풍속, 습도, 강수량, 전기요금, 공장인원, 인건비                                |
-| 달력                    | `hour`, `day_of_week`                                                                       |
+| 추세·통계 | `diff_1`, `roll_mean_3`, `roll_mean_24`, `roll_max_24`, `roll_std_24`, `max_since_midnight` |
+| 주간 패턴 | `same_hour_2w_mean`, `same_hour_2w_max`, `last_op_day_same_hour`(직전 가동일 같은 시각) |
+| 전일 상태 | `prev_day_max`, `prev_day_off` |
+| 외생변수(1시간 전) | 생산량, 기온, 풍속, 습도, 강수량, 전기요금, 공장인원, 인건비 |
+| 달력 | `hour`, `day_of_week` (RF는 여기에 sin/cos 4개를 더해 42개) |
 
 **누수 점검**: `preprocessing.leakage_checks()`에서 다음을 assert로 확인합니다.
-
 - `lag_1`, `q60_lag1`, `production`이 T−1 값인지
 - target과 같거나 상관계수가 0.99 이상인 feature가 없는지
+
+## 모델별 입력 변환 (각 스크립트에서 수행)
+
+모든 모델은 같은 분할·같은 피크 라벨(179)·같은 test(336시간, 피크 47건)를 씁니다. 데이터셋 파일은 공통 1개(`results/1_preprocessing/peak_dataset.csv`)이고, 모델에 맞춘 변환은 각 스크립트가 실행 중에 수행합니다(별도 파일로 저장하지 않음).
+
+| 모델 | 스크립트 | 입력 | 수행하는 변환 |
+|---|---|---|---|
+| Random Forest | `02_random_forest.py` | 공통 feature 38개 + 4개 = **42개** | `hour`·`day_of_week` 정수에 sin/cos 4개(`hour_sin`, `hour_cos`, `dow_sin`, `dow_cos`)를 추가(`preprocessing.add_cyclic_calendar`). 스케일링 없음 |
+| XGBoost | `03_xgboost.py` | 공통 feature **38개** 그대로 | 변환 없음(달력은 정수). `scale_pos_weight`는 학습 구간마다 음성/양성 비율로 다시 계산해 후보로 비교(최종 미사용) |
+| CatBoost | `04_catboost.py` | 공통 feature **38개** | `hour`·`day_of_week`를 문자열로 바꿔 `cat_features`(범주형)로 지정. 나머지는 수치 그대로 |
+| Isolation Forest | `05_isolation_forest.py` | 전력 관련 feature **21개** | 달력·외생변수를 빼고 전력 lag·15분 값·rolling·주간 패턴만 사용. 학습은 가동 시간대(전일 가동 & 08~18시) 행으로만 함. 점수는 `-decision_function`이며, `lag_1`이 학습 중앙값보다 낮은 시점의 이상은 피크 위험이 아니므로 최저 점수로 보정. 판정 경계는 학습 점수 상위 40% |
+| XGBoost·LightGBM 회귀 | `06_regression.py` | 공통 feature **38개** | 라벨 대신 연속값 `target_power`를 예측 대상으로 사용. 예측값 ≥ cutoff(XGB 171, LGBM 173, CV로 선택)이면 피크로 판정 |
+| RNN (GRU) | `01_rnn.py` | 시퀀스 **168시간 × 8채널** | `peak_dataset.csv`를 쓰지 않고 같은 정제 과정을 스스로 수행한 뒤, 예측 시점 T마다 T−168~T−1 구간을 잘라 시퀀스를 만듦. 채널은 power, 15분 값, 60분 값, 생산량, 시간 sin/cos, 요일 sin/cos. 입력·target 모두 MinMax 정규화. 예측 시점은 다른 모델과 같은 2021-01-15부터. 예측값 ≥ 167이면 피크로 판정 |
+
+**변환에서 지킨 원칙**
+- 학습 데이터로 무언가를 맞추는 변환은 **학습 구간으로만** 맞춥니다. MinMax 스케일러, Isolation Forest의 중앙값·판정 경계, 분류 threshold·회귀 cutoff가 여기에 해당하고, CV에서는 fold마다 다시 맞춥니다.
+- sin/cos, 범주형 지정, feature 선택처럼 값을 학습하지 않는 변환은 데이터 전체에 같은 규칙으로 적용합니다.
+- 모델별 선택의 근거:
+  - 달력 인코딩: `ablation_encoding.py`
+  - Isolation Forest 입력 구성: `05_isolation_forest.py`의 실험 A~C
+  - RNN 입력 구조: `01_rnn.py`의 구조 A~D 비교
 
 ## 검증 방식
 
@@ -105,37 +128,37 @@ python ablation_encoding.py      # 약 1분
 
 ## 결과 (Test 2021-09-01~09-14)
 
-| 모델                                   | CV F1 | CV PR-AUC | Test F1 (95% CI)   | Test PR-AUC | Test Recall |
-| -------------------------------------- | ----- | --------- | ------------------ | ----------- | ----------- |
-| 규칙: 직전 값 (lag_1 ≥ 179)            | –     | –         | 0.447              | 0.530       | 0.447       |
-| 규칙: 1주 전 같은 시각 (lag_168 ≥ 179) | –     | –         | 0.654              | 0.562       | 0.702       |
-| Random Forest                          | 0.817 | 0.886     | 0.703 [0.53, 0.82] | 0.767       | 0.830       |
-| XGBoost                                | 0.820 | 0.895     | 0.691 [0.55, 0.80] | 0.740       | 0.809       |
-| CatBoost                               | 0.827 | 0.905     | 0.679 [0.54, 0.78] | 0.738       | 0.809       |
-| 앙상블 (RF+XGB+CB 평균)                | 0.829 | 0.905     | 0.685 [0.52, 0.80] | 0.748       | 0.787       |
-| RNN (GRU, 예측값 ≥ 167)                | –     | –         | 0.732 [0.59, 0.83] | 0.744       | 0.957       |
-| XGBoost 회귀 (예측값 ≥ 171)            | 0.794 | –         | 0.694 [0.54, 0.81] | 0.697       | 0.894       |
-| LightGBM 회귀 (예측값 ≥ 173)           | 0.806 | –         | 0.690 [0.52, 0.80] | 0.685       | 0.851       |
-| Isolation Forest (비지도)              | 0.618 | 0.504     | 0.485 [0.37, 0.58] | 0.344       | 0.702       |
+| 모델 | CV F1 | CV PR-AUC | Test F1 (95% CI) | Test PR-AUC | Test Recall |
+|---|---|---|---|---|---|
+| 규칙: 직전 값 (lag_1 ≥ 179) | – | – | 0.447 | 0.530 | 0.447 |
+| 규칙: 1주 전 같은 시각 (lag_168 ≥ 179) | – | – | 0.654 | 0.562 | 0.702 |
+| Random Forest | 0.821 | 0.892 | 0.729 [0.58, 0.83] | 0.767 | 0.915 |
+| XGBoost | 0.821 | 0.895 | 0.697 [0.57, 0.79] | 0.723 | 0.809 |
+| CatBoost | 0.827 | 0.905 | 0.679 [0.54, 0.78] | 0.738 | 0.809 |
+| 앙상블 (RF+XGB+CB 평균) | 0.829 | 0.911 | 0.692 [0.53, 0.80] | 0.742 | 0.787 |
+| RNN (GRU, 예측값 ≥ 167) | – | – | 0.732 [0.59, 0.83] | 0.744 | 0.957 |
+| XGBoost 회귀 (예측값 ≥ 171) | 0.791 | – | 0.705 [0.54, 0.82] | 0.728 | 0.915 |
+| LightGBM 회귀 (예측값 ≥ 173) | 0.806 | – | 0.690 [0.52, 0.80] | 0.685 | 0.851 |
+| Isolation Forest (비지도) | 0.618 | 0.504 | 0.485 [0.37, 0.58] | 0.344 | 0.702 |
 
 회귀 성능(Test MAE):
 
-| 모델                       | MAE   | RMSE  |
-| -------------------------- | ----- | ----- |
-| 직전 값 (lag_1)            | 14.52 | 23.78 |
-| 1주 전 같은 시각 (lag_168) | 8.95  | 12.33 |
-| XGBoost 회귀               | 6.22  | 8.88  |
-| LightGBM 회귀              | 6.27  | 9.79  |
-| RNN (GRU)                  | 6.72  | 9.13  |
+| 모델 | MAE | RMSE |
+|---|---|---|
+| 직전 값 (lag_1) | 14.52 | 23.78 |
+| 1주 전 같은 시각 (lag_168) | 8.95 | 12.33 |
+| XGBoost 회귀 | 6.12 | 8.61 |
+| LightGBM 회귀 | 6.27 | 9.79 |
+| RNN (GRU) | 6.72 | 9.13 |
 
 **RNN 구조 선택 결과**: CV MAE 기준으로 GRU가 선택됐습니다.
 
-| 구조         | 입력 형태 | CV MAE   |
-| ------------ | --------- | -------- |
-| A: SimpleRNN | (168, 1)  | 11.39    |
-| B: SimpleRNN | (7, 24)   | 14.14    |
-| C: SimpleRNN | (168, 8)  | 9.59     |
-| D: GRU       | (168, 8)  | **8.24** |
+| 구조 | 입력 형태 | CV MAE |
+|---|---|---|
+| A: SimpleRNN | (168, 1) | 11.48 |
+| B: SimpleRNN | (7, 24) | 14.14 |
+| C: SimpleRNN | (168, 8) | 9.21 |
+| D: GRU | (168, 8) | **8.24** |
 
 ### 해석
 
@@ -145,8 +168,9 @@ python ablation_encoding.py      # 약 1분
    - test가 14일(피크 47건)뿐이라 F1 95% 신뢰구간 폭이 약 ±0.15입니다.
    - 신뢰구간은 일 단위 블록 부트스트랩(2000회)으로 구했습니다.
    - 그래서 모델을 고를 때는 CV 지표와 함께 판단합니다.
-3. **RNN(GRU)은 Recall이 가장 높습니다(0.957).** 대신 Precision이 0.592로 오탐이 많습니다.
-   - 피크를 놓치지 않는 것이 중요한 경보 용도에 적합합니다.
+3. **test F1은 RNN(0.732)과 Random Forest(0.729)가 가장 높습니다.**
+   - RNN은 Recall이 가장 높아(0.957, 놓친 피크 2건) 피크를 놓치지 않는 것이 중요한 경보 용도에 적합합니다. 대신 Precision이 0.592로 오탐이 많습니다.
+   - RF는 Recall 0.915, Precision 0.606으로 RNN과 비슷한 성향이며, 학습 시간이 짧고 변수 중요도를 바로 볼 수 있습니다.
 4. **Isolation Forest는 라벨 없이 동작하지만 성능이 낮습니다.**
    - F1 0.485로, 1주 전 같은 시각 규칙보다도 낮습니다.
    - 라벨이 없는 신규 설비용 참고 모델로만 둡니다.
@@ -155,25 +179,40 @@ python ablation_encoding.py      # 약 1분
 
 ## 결과 파일 (`results/`)
 
-| 폴더                  | 파일                                                                                        | 내용                                                                  |
-| --------------------- | ------------------------------------------------------------------------------------------- | --------------------------------------------------------------------- |
-| `1_preprocessing/`    | `clean_hourly.csv`                                                                          | 정제된 시간 단위 데이터                                               |
-|                       | `peak_dataset.csv`                                                                          | 모델 공통 feature 38개 + target + 라벨                                |
-|                       | `copied_days.json`                                                                          | 복제일 → 원본 날짜                                                    |
-|                       | `preprocessing_report.txt`                                                                  | 전처리 진단 로그                                                      |
-| `2_test_predictions/` | `rnn_forecast.csv`                                                                          | RNN: `Date, actual, forecast, actual_label, predicted_label`          |
-|                       | `random_forest_predictions.csv`                                                             | `Date, actual_label, predicted_label, risk_probability, actual_power` |
-|                       | `xgboost_predictions.csv`, `catboost_predictions.csv`, `ensemble_rf_xgb_cb_predictions.csv` | 같은 형식                                                             |
-|                       | `xgboost_reg_predictions.csv`, `lightgbm_reg_predictions.csv`                               | 회귀: `predicted_power` 포함                                          |
-|                       | `isolation_forest_predictions.csv`                                                          | `anomaly_score` 포함                                                  |
-|                       | `persistence_predictions.csv`, `persistence_lag168_predictions.csv`                         | 규칙 기반 기준선                                                      |
-| `3_comparison/`       | `final_comparison.csv`                                                                      | **전체 모델 test 성능 + F1 95% 신뢰구간 (보고서용)**                  |
-|                       | `model_comparison.csv`                                                                      | 모델별 test 성능                                                      |
-|                       | `regression_comparison.csv`                                                                 | 회귀 MAE/RMSE                                                         |
-|                       | `rnn_metrics.txt`                                                                           | RNN test 성능 요약                                                    |
-|                       | `missing_ablation_summary.csv`                                                              | 결측 처리 방식별 성능 비교 요약 (`ablation_missing.py`)               |
-| `4_model_details/`    | `*_cv.csv`, `*_oof.csv`, `*_importance.csv`                                                 | grid 탐색 결과, CV out-of-fold 예측, 변수 중요도                      |
-|                       | `rnn_cv.csv`                                                                                | RNN 구조별 CV 결과 (CV 포함 실행 시)                                  |
-|                       | `missing_ablation_real.csv`, `missing_ablation_simulated.csv`                               | 결측 처리 비교 상세                                                   |
-| `5_models/`           | `xgboost_classifier.json`, `catboost_classifier.cbm`                                        | 학습된 모델                                                           |
-| `6_figures/`          | `rnn_forecast_plot.png`                                                                     | RNN 테스트 예측 그래프                                                |
+| 폴더 | 파일 | 내용 |
+|---|---|---|
+| `1_preprocessing/` | `clean_hourly.csv` | 정제된 시간 단위 데이터 |
+| | `peak_dataset.csv` | 모델 공통 feature 38개 + target + 라벨 |
+| | `copied_days.json` | 복제일 → 원본 날짜 |
+| | `preprocessing_report.txt` | 전처리 진단 로그 |
+| `2_test_predictions/` | `rnn_forecast.csv` | RNN: `Date, actual, forecast, actual_label, predicted_label` |
+| | `random_forest_predictions.csv` | `Date, actual_label, predicted_label, risk_probability, actual_power` |
+| | `xgboost_predictions.csv`, `catboost_predictions.csv`, `ensemble_rf_xgb_cb_predictions.csv` | 같은 형식 |
+| | `xgboost_reg_predictions.csv`, `lightgbm_reg_predictions.csv` | 회귀: `predicted_power` 포함 |
+| | `isolation_forest_predictions.csv` | `anomaly_score` 포함 |
+| | `persistence_predictions.csv`, `persistence_lag168_predictions.csv` | 규칙 기반 기준선 |
+| `3_comparison/` | `final_comparison.csv` | **전체 모델 test 성능 + F1 95% 신뢰구간 (보고서용)** |
+| | `model_comparison.csv` | 모델별 test 성능 |
+| | `regression_comparison.csv` | 회귀 MAE/RMSE |
+| | `rnn_metrics.txt` | RNN test 성능 요약 |
+| | `missing_ablation_summary.csv` | 결측 처리 방식별 성능 비교 요약 (`ablation_missing.py`) |
+| | `encoding_ablation_summary.csv` | 달력 인코딩별 성능 비교 요약 (`ablation_encoding.py`) |
+| `4_model_details/` | `*_cv.csv`, `*_oof.csv`, `*_importance.csv` | grid 탐색 결과, CV out-of-fold 예측, 변수 중요도 |
+| | `rnn_cv.csv` | RNN 구조별 CV 결과 (CV 포함 실행 시) |
+| | `missing_ablation_real.csv`, `missing_ablation_simulated.csv`, `encoding_ablation.csv` | 결측 처리·인코딩 비교 상세 |
+| `5_models/` | `random_forest.joblib`, `xgboost_classifier.json`, `catboost_classifier.cbm`, `isolation_forest.joblib`, `xgboost_reg.joblib`, `lightgbm_reg.joblib`, `rnn.keras` (+ `rnn_scalers.joblib`) | 9/1 이전 전체로 학습한 최종 모델 |
+| | `*_meta.json` | 모델별 메타데이터: 판정 기준(threshold·cutoff), feature 목록과 순서, 파라미터, 학습·test 기간, 피크 기준 179, CV·test 성능 |
+| `6_figures/` | `rnn_forecast_plot.png` | RNN 테스트 예측 그래프 |
+
+## 저장된 모델 불러오기
+
+```python
+import json, joblib
+meta = json.load(open("results/5_models/random_forest_meta.json", encoding="utf-8"))
+rf = joblib.load("results/5_models/" + meta["model_file"])
+proba = rf.predict_proba(X[meta["features"]])[:, 1]          # X = feature 표 (meta["features"] 순서)
+peak = proba >= meta["classification_threshold"]              # 피크 위험 판정
+```
+
+- XGBoost는 `XGBClassifier().load_model(...)`, CatBoost는 `CatBoostClassifier().load_model(...)`로 불러와요.
+- RNN은 `keras.models.load_model("results/5_models/rnn.keras")`로 불러오고, 입력·출력 변환에는 `rnn_scalers.joblib`를 써요.

@@ -1,13 +1,10 @@
-numpy
-pandas
-matplotlib
-seaborn
-scikit-learn
-tensorflow
-keras
-ortools
-ipykernel
-xgboost
-lightgbm
-shap
-catboost
+# Python 3.11
+pandas>=2.2
+numpy>=1.26
+scikit-learn>=1.5
+scipy>=1.13
+xgboost>=2.1
+catboost>=1.2.5
+lightgbm>=4.3
+tensorflow>=2.16
+matplotlib>=3.8
