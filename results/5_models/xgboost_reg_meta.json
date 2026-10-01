@@ -12,7 +12,7 @@
     "2021-09-14 23:00"
   ],
   "seed": 42,
-  "python": "3.11.15",
+  "python": "3.11.9",
   "script": "06_regression.py",
   "task": "다음 시간 power 회귀 + cutoff로 피크 판정",
   "target": "target_power (연속값)",
@@ -61,22 +61,22 @@
   ],
   "params": {
     "max_depth": 3,
-    "learning_rate": 0.03,
+    "learning_rate": 0.1,
     "min_child_weight": 5,
     "objective": "reg:absoluteerror",
-    "n_estimators": 735
+    "n_estimators": 203
   },
   "cv": {
-    "MAE": 9.300421181923705,
-    "F1": 0.7941176470588235
+    "MAE": 9.27342700958252,
+    "F1": 0.7911275415896488
   },
   "test": {
-    "Precision": 0.5676,
-    "Recall": 0.8936,
-    "F1": 0.6942,
-    "ROC-AUC": 0.9517,
-    "PR-AUC": 0.6971,
-    "MAE": 6.2213364612488515,
-    "RMSE": 8.877136390751785
+    "Precision": 0.5733,
+    "Recall": 0.9149,
+    "F1": 0.7049,
+    "ROC-AUC": 0.9532,
+    "PR-AUC": 0.7284,
+    "MAE": 6.118290543556213,
+    "RMSE": 8.614985650395797
   }
 }

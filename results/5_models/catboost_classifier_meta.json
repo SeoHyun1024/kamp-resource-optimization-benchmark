@@ -12,7 +12,7 @@
     "2021-09-14 23:00"
   ],
   "seed": 42,
-  "python": "3.11.15",
+  "python": "3.11.9",
   "script": "04_catboost.py",
   "task": "피크 위험 확률 분류",
   "decision_rule": "predict_proba[:, 1] >= 0.3",

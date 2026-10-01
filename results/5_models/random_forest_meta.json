@@ -12,11 +12,11 @@
     "2021-09-14 23:00"
   ],
   "seed": 42,
-  "python": "3.11.15",
+  "python": "3.11.9",
   "script": "02_random_forest.py",
   "task": "피크 위험 확률 분류",
-  "decision_rule": "predict_proba[:, 1] >= 0.45",
-  "classification_threshold": 0.45,
+  "decision_rule": "predict_proba[:, 1] >= 0.55",
+  "classification_threshold": 0.55,
   "calendar_encoding": "int+cyclic",
   "features": [
     "lag_1",
@@ -64,20 +64,20 @@
   ],
   "params": {
     "max_depth": null,
-    "min_samples_leaf": 5,
+    "min_samples_leaf": 10,
     "max_features": "sqrt",
-    "class_weight": null,
+    "class_weight": "balanced_subsample",
     "n_estimators": 500
   },
   "cv": {
-    "PR-AUC": 0.896709287486662,
-    "F1": 0.8188976377952756
+    "PR-AUC": 0.8919883902136817,
+    "F1": 0.8211678832116789
   },
   "test": {
-    "Precision": 0.614,
-    "Recall": 0.7447,
-    "F1": 0.6731,
-    "ROC-AUC": 0.9607,
-    "PR-AUC": 0.7707
+    "Precision": 0.6056,
+    "Recall": 0.9149,
+    "F1": 0.7288,
+    "ROC-AUC": 0.9594,
+    "PR-AUC": 0.7669
   }
 }

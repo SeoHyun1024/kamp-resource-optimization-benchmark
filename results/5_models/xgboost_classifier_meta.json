@@ -12,11 +12,11 @@
     "2021-09-14 23:00"
   ],
   "seed": 42,
-  "python": "3.11.15",
+  "python": "3.11.9",
   "script": "03_xgboost.py",
   "task": "피크 위험 확률 분류",
-  "decision_rule": "predict_proba[:, 1] >= 0.35",
-  "classification_threshold": 0.35,
+  "decision_rule": "predict_proba[:, 1] >= 0.3",
+  "classification_threshold": 0.3,
   "calendar_encoding": "int",
   "features": [
     "lag_1",
@@ -60,22 +60,22 @@
   ],
   "params": {
     "max_depth": 3,
-    "learning_rate": 0.03,
+    "learning_rate": 0.1,
     "min_child_weight": 5,
-    "n_estimators": 328,
+    "n_estimators": 169,
     "scale_pos_weight": 1.0,
     "subsample": 0.8,
     "colsample_bytree": 0.8
   },
   "cv": {
-    "PR-AUC": 0.8951236938262576,
-    "F1": 0.8199233716475096
+    "PR-AUC": 0.8948856093069201,
+    "F1": 0.8208955223880597
   },
   "test": {
-    "Precision": 0.6032,
+    "Precision": 0.6129,
     "Recall": 0.8085,
-    "F1": 0.6909,
-    "ROC-AUC": 0.9562,
-    "PR-AUC": 0.7398
+    "F1": 0.6972,
+    "ROC-AUC": 0.9551,
+    "PR-AUC": 0.723
   }
 }

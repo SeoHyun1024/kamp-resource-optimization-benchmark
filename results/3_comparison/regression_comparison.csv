@@ -1,5 +1,5 @@
 Model,MAE,RMSE,peak_hour_MAE,cv_MAE,params,MAE 개선율(vs lag_1)
 Persistence (lag_1),14.520833333333334,23.776301226221037,22.06382978723404,,,0.0
 1주 전 같은 시각 (lag_168),8.949404761904763,12.325568662627411,9.893617021276595,,,0.383685181389629
-xgboost_reg,6.2213364612488515,8.877136390751785,8.819542418134974,9.300421181923705,"{'max_depth': 3, 'learning_rate': 0.03, 'min_child_weight': 5, 'objective': 'reg:absoluteerror'}, n_estimators=735",0.5715578907604808
+xgboost_reg,6.118290543556213,8.614985650395797,8.318950896567486,9.27342700958252,"{'max_depth': 3, 'learning_rate': 0.1, 'min_child_weight': 5, 'objective': 'reg:absoluteerror'}, n_estimators=203",0.578654309769443
 lightgbm_reg,6.274697276932898,9.789954506253203,8.397409142199477,7.518869610871908,"{'num_leaves': 7, 'learning_rate': 0.03, 'min_child_samples': 30, 'objective': 'regression_l1'}, n_estimators=1419",0.5678831143575623

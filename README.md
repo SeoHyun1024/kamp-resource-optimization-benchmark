@@ -34,17 +34,27 @@ kamp/
 Python 3.11 기준입니다.
 
 ```bash
+# 0. 패키지 설치 (처음 한 번)
 pip install -r requirements.txt
 
-python preprocessing.py        # 전처리 → results/1_preprocessing/
-python 01_rnn.py               # RNN (CV 포함 약 1시간, 빠른 실행: --variant D_multi_gru --epochs 90)
-python 02_random_forest.py
-python 03_xgboost.py
-python 04_catboost.py
-python 05_isolation_forest.py
-python 06_regression.py
-python 07_compare.py           # 마지막에 실행 → results/3_comparison/final_comparison.csv
-python ablation_missing.py     # (선택) 결측 처리 방식 비교, 약 4분
+# 1. 전처리
+python preprocessing.py
+
+# 2. 모델 학습·평가
+python 01_rnn.py --variant D_multi_gru --epochs 90   # 약 10~15분
+python 02_random_forest.py                            # 약 2분
+python 03_xgboost.py                                  # 약 30초
+python 04_catboost.py                                 # 약 1분
+python 05_isolation_forest.py                         # 약 10초
+python 06_regression.py                               # 약 1~2분
+
+# 3. 전체 비교 (반드시 마지막)
+python 07_compare.py
+
+# 4. (선택) 보조 실험
+python ablation_copied_days.py   # 약 1분
+python ablation_missing.py       # 약 4분
+python ablation_encoding.py      # 약 1분
 ```
 
 - 모든 스크립트는 `kamp` 폴더에서 실행합니다.

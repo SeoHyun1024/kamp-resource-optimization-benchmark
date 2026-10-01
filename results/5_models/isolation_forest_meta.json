@@ -12,7 +12,7 @@
     "2021-09-14 23:00"
   ],
   "seed": 42,
-  "python": "3.11.15",
+  "python": "3.11.9",
   "script": "05_isolation_forest.py",
   "task": "비지도 이상탐지 (라벨은 설정 선택에만 사용)",
   "experiment": "C_power_operating_dir",
@@ -43,8 +43,8 @@
   "n_fit_rows": 2057,
   "score": "-decision_function(X); lag_1 < 156.0 이면 최저 점수로 보정",
   "lag1_median": 156.0,
-  "decision_rule": "score >= -0.09901543625640805 (train score 상위 40%)",
-  "score_cut": -0.09901543625640805,
+  "decision_rule": "score >= -0.09901543625640802 (train score 상위 40%)",
+  "score_cut": -0.09901543625640802,
   "train_quantile": 0.4,
   "params": {
     "n_estimators": 300,

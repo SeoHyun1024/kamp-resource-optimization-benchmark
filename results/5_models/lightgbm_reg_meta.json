@@ -12,7 +12,7 @@
     "2021-09-14 23:00"
   ],
   "seed": 42,
-  "python": "3.11.15",
+  "python": "3.11.9",
   "script": "06_regression.py",
   "task": "다음 시간 power 회귀 + cutoff로 피크 판정",
   "target": "target_power (연속값)",
