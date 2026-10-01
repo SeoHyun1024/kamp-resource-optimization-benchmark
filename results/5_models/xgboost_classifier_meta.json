@@ -1,0 +1,81 @@
+{
+  "model": "xgboost_classifier",
+  "model_file": "xgboost_classifier.json",
+  "peak_threshold": 179.0,
+  "label_rule": "power_T = max(15분,30분,45분,60분) >= peak_threshold -> 1",
+  "train_period": [
+    "2021-01-15 00:00",
+    "2021-08-31 23:00"
+  ],
+  "test_period": [
+    "2021-09-01 00:00",
+    "2021-09-14 23:00"
+  ],
+  "seed": 42,
+  "python": "3.11.9",
+  "script": "03_xgboost.py",
+  "task": "피크 위험 확률 분류",
+  "decision_rule": "predict_proba[:, 1] >= 0.3",
+  "classification_threshold": 0.3,
+  "calendar_encoding": "int",
+  "features": [
+    "lag_1",
+    "lag_2",
+    "lag_3",
+    "lag_6",
+    "lag_12",
+    "lag_24",
+    "lag_48",
+    "lag_167",
+    "lag_168",
+    "lag_169",
+    "lag_336",
+    "q15_lag1",
+    "q30_lag1",
+    "q45_lag1",
+    "q60_lag1",
+    "avg_lag1",
+    "intra_hour_slope",
+    "diff_1",
+    "roll_mean_3",
+    "roll_mean_24",
+    "roll_max_24",
+    "roll_std_24",
+    "same_hour_2w_mean",
+    "same_hour_2w_max",
+    "last_op_day_same_hour",
+    "prev_day_max",
+    "prev_day_off",
+    "max_since_midnight",
+    "production",
+    "temperature",
+    "wind_speed",
+    "humidity",
+    "precipitation",
+    "elec_price",
+    "workers",
+    "labor_cost",
+    "hour",
+    "day_of_week"
+  ],
+  "params": {
+    "max_depth": 3,
+    "learning_rate": 0.1,
+    "min_child_weight": 5,
+    "n_estimators": 169,
+    "scale_pos_weight": 1.0,
+    "subsample": 0.8,
+    "colsample_bytree": 0.8
+  },
+  "cv": {
+    "PR-AUC": 0.8948856093069201,
+    "F1": 0.8208955223880597
+  },
+  "test": {
+    "Precision": 0.6129,
+    "Recall": 0.8085,
+    "F1": 0.6972,
+    "ROC-AUC": 0.9551,
+    "PR-AUC": 0.723
+  }
+}

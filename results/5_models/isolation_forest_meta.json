@@ -1,0 +1,67 @@
+{
+  "model": "isolation_forest",
+  "model_file": "isolation_forest.joblib",
+  "peak_threshold": 179.0,
+  "label_rule": "power_T = max(15분,30분,45분,60분) >= peak_threshold -> 1",
+  "train_period": [
+    "2021-01-15 00:00",
+    "2021-08-31 23:00"
+  ],
+  "test_period": [
+    "2021-09-01 00:00",
+    "2021-09-14 23:00"
+  ],
+  "seed": 42,
+  "python": "3.11.9",
+  "script": "05_isolation_forest.py",
+  "task": "비지도 이상탐지 (라벨은 설정 선택에만 사용)",
+  "experiment": "C_power_operating_dir",
+  "features": [
+    "lag_1",
+    "lag_2",
+    "lag_3",
+    "lag_24",
+    "lag_168",
+    "lag_336",
+    "q15_lag1",
+    "q30_lag1",
+    "q45_lag1",
+    "q60_lag1",
+    "avg_lag1",
+    "intra_hour_slope",
+    "diff_1",
+    "roll_mean_3",
+    "roll_mean_24",
+    "roll_max_24",
+    "roll_std_24",
+    "same_hour_2w_mean",
+    "same_hour_2w_max",
+    "last_op_day_same_hour",
+    "max_since_midnight"
+  ],
+  "fit_rows": "prev_day_off == 0 & 8 <= hour <= 18",
+  "n_fit_rows": 2057,
+  "score": "-decision_function(X); lag_1 < 156.0 이면 최저 점수로 보정",
+  "lag1_median": 156.0,
+  "decision_rule": "score >= -0.09901543625640802 (train score 상위 40%)",
+  "score_cut": -0.09901543625640802,
+  "train_quantile": 0.4,
+  "params": {
+    "n_estimators": 300,
+    "max_samples": "auto",
+    "max_features": 1.0,
+    "random_state": 42,
+    "n_jobs": -1
+  },
+  "cv": {
+    "PR-AUC": 0.5041083542810092,
+    "F1": 0.6177847113884556
+  },
+  "test": {
+    "Precision": 0.3708,
+    "Recall": 0.7021,
+    "F1": 0.4853,
+    "ROC-AUC": 0.768,
+    "PR-AUC": 0.344
+  }
+}

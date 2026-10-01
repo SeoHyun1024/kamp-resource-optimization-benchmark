@@ -1,0 +1,9 @@
+target=power
+variant=D_multi_gru
+epochs=90
+test_mae=6.7185
+test_rmse=9.1310
+peak_cutoff=167
+peak_precision=0.5921
+peak_recall=0.9574
+peak_f1=0.7317

@@ -1,0 +1,56 @@
+{
+  "model": "rnn",
+  "model_file": "rnn.keras",
+  "scaler_file": "rnn_scalers.joblib",
+  "script": "01_rnn.py",
+  "task": "다음 시간 power 예측 + cutoff로 피크 판정",
+  "variant": "D_multi_gru",
+  "architecture": {
+    "channels": "multi",
+    "shape": "168xC",
+    "cell": "gru",
+    "units": 64,
+    "dense": 32
+  },
+  "input": "T-168 ~ T-1 시퀀스, 채널 = ['power', '15분', '60분', '생산량', 'hour_sin', 'hour_cos', 'dow_sin', 'dow_cos']",
+  "input_shape": [
+    168,
+    8
+  ],
+  "channels": [
+    "power",
+    "15분",
+    "60분",
+    "생산량",
+    "hour_sin",
+    "hour_cos",
+    "dow_sin",
+    "dow_cos"
+  ],
+  "scaling": "MinMaxScaler (입력 채널별 x_scaler, target y_scaler), 학습 구간(9/1 이전)으로만 fit",
+  "epochs": 90,
+  "batch_size": 128,
+  "optimizer": "Adam(lr=1e-3)",
+  "loss": "mse",
+  "peak_threshold": 179.0,
+  "train_period": [
+    "2021-01-15 00:00:00",
+    "2021-08-31 23:00:00"
+  ],
+  "test_period": [
+    "2021-09-01 00:00:00",
+    "2021-09-14 23:00:00"
+  ],
+  "seed": 42,
+  "python": "3.11.9",
+  "tensorflow": "2.21.0",
+  "test": {
+    "MAE": 6.718535315422785,
+    "RMSE": 9.131044751231022,
+    "Precision": 0.5921,
+    "Recall": 0.9574,
+    "F1": 0.7317
+  },
+  "decision_rule": "predict >= 167.0",
+  "peak_cutoff": 167.0
+}
