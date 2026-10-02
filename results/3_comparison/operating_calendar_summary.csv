@@ -1,0 +1,17 @@
+﻿,value
+days,257.0
+operating_days,208.0
+non_operating_days,49.0
+production_agreement,0.9416342412451362
+power_on_production_zero,15.0
+power_off_production_pos,0.0
+holiday_operating,7.0
+holidays,7.0
+saturday_operating,35.0
+saturdays,37.0
+sunday_operating,8.0
+sundays,37.0
+weekday_non_operating,18.0
+calendar_mismatch_days,68.0
+day_threshold,72.5
+hour_threshold,41.0
