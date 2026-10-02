@@ -4,12 +4,14 @@
 실행
     python 01_rnn.py                              # target = power = max(15/30/45/60분) (RF/XGB/CatBoost와 같은 정의)
     python 01_rnn.py --target 15분                # target = 15분 (기존 baseline_rnn.py·01 노트북과 같은 정의)
-    python 01_rnn.py --variant D_multi_gru        # CV 없이 구조 하나만 학습 (빠른 실행)
+    python 01_rnn.py --variant D_multi_gru        # 구조 하나만 CV(2 fold) 후 최종 학습 (빠른 실행)
+    python 01_rnn.py --variant D_multi_gru --skip-cv --epochs 90   # CV 없이 최종 학습만 (cutoff 167 고정)
 
 데이터: 스크립트 폴더 기준 data/, data/legacy/, 같은 폴더 순으로 okm_augumented_2021.csv 자동 탐색
 결과: results/2_test_predictions/rnn_forecast.csv   (테스트 예측)
       results/3_comparison/rnn_metrics.txt           (테스트 성능 요약 -> 보고서 수치는 여기서 확인)
       results/4_model_details/rnn_cv.csv             (구조별 CV 결과)
+      results/4_model_details/rnn_oof.csv            (선택 구조의 7·8월 CV 예측 -> 09 경보 조합 선택에 사용)
       results/6_figures/rnn_forecast_plot.png
 
 ------------------------------------------------------------------------------
@@ -20,8 +22,10 @@ baseline_rnn.py 대비 수정 사항
     - 풍속(3)·강수량(1) 결측 -> 시간 보간 / 공장인원(17) -> 생산량 0 구간 확인 후 0
     - 증강 복제일 탐지: 257일 중 115일이 이전 날의 15분 값 96개와 완전히 동일(1~7월).
       행은 지우지 않고(시계열 연속성 유지), CV 검증 구간에서만 제외한다.
-[2] Early stopping: monitor="loss"(train loss) -> 검증 구간 val_loss.
+[2] Early stopping: monitor="loss"(train loss) -> 별도 멈춤 판단 구간의 val_loss.
     train loss 기준이면 과적합 시점을 알 수 없어 사실상 60 epoch 고정과 같았다.
+    멈춤 판단 구간은 fold마다 학습 구간의 '원본 일자 마지막 14일'로 따로 떼어 둔다.
+    7·8월 검증 구간은 멈춤 판단에 쓰지 않고 채점(OOF)에만 쓴다 -> OOF가 RF OOF와 같은 조건이 된다.
 [3] 검증 구간 도입: 7월·8월 확장창 2-fold CV
       fold1: 7/1 이전 학습 -> 7월 검증 / fold2: 8/1 이전 학습 -> 8월 검증
     -> 입력 구조 선택, best epoch, 피크 판정 cutoff를 여기서만 정한다.
@@ -36,7 +40,7 @@ baseline_rnn.py 대비 수정 사항
 [7] target=power 일 때 "예측값 >= cutoff" 로 피크(>=179) 판정 성능(F1)도 계산
     (피크 임계값 179 = 2021-01-08~07-31 power의 90% quantile, 다른 모델과 동일한 test 라벨 47건)
 
-2021 데이터 실행 결과 (target=power, seed 42)
+2021 데이터 실행 결과 (target=power, seed 42) — 멈춤 판단 구간 분리 이전 버전 기준. 재실행하면 값이 바뀔 수 있다
     CV MAE: A 11.39 / B 14.14 / C 9.59 / D 8.24 -> D_multi_gru 선택
     Test  : MAE 6.71, RMSE 9.12 (lag_1 14.52, lag_168 8.95)
             피크 판정(예측 >= 167): Precision 0.592, Recall 0.957, F1 0.732
@@ -79,6 +83,7 @@ TEST_START = pd.Timestamp("2021-09-01")
 CV_FOLDS = [(pd.Timestamp("2021-07-01"), pd.Timestamp("2021-08-01")),
             (pd.Timestamp("2021-08-01"), pd.Timestamp("2021-09-01"))]
 PATIENCE, BATCH = 10, 128
+STOP_DAYS = 14   # early stopping 판단용으로 학습 구간 끝에서 떼어 두는 원본 일자 수
 CUTOFF_GRID = np.arange(165, 190, 1.0)
 
 VARIANTS = {
@@ -90,8 +95,9 @@ VARIANTS = {
 
 parser = argparse.ArgumentParser()
 parser.add_argument("--target", default="power", choices=["power", "15분"])
-parser.add_argument("--variant", default=None, choices=list(VARIANTS), help="지정하면 CV 없이 이 구조만 학습")
-parser.add_argument("--epochs", type=int, default=90, help="--variant 사용 시 최종 학습 epoch")
+parser.add_argument("--variant", default=None, choices=list(VARIANTS), help="지정하면 이 구조만 CV 후 학습")
+parser.add_argument("--skip-cv", action="store_true", help="--variant와 함께: CV 없이 최종 학습만 (OOF 미생성)")
+parser.add_argument("--epochs", type=int, default=90, help="--skip-cv 사용 시 최종 학습 epoch")
 parser.add_argument("--max-epochs", type=int, default=150, help="CV early stopping 최대 epoch")
 args = parser.parse_args()
 TARGET = args.target
@@ -161,6 +167,17 @@ def cv_folds():
     return out
 
 
+def stop_split(tr):
+    """학습 구간을 (내부 학습, 멈춤 판단)으로 나눈다. 멈춤 판단 = 복제일이 아닌 마지막 STOP_DAYS일.
+    내부 학습은 멈춤 판단 구간 시작 이전 행만 써서 시간 순서를 지킨다."""
+    days = tr.index.normalize()
+    orig_days = np.sort(days[tr["is_copied_day"].to_numpy() == 0].unique())
+    stop_days = orig_days[-STOP_DAYS:]
+    stop = tr.loc[days.isin(stop_days)]
+    inner = tr.loc[tr.index < stop.index.min()]
+    return inner, stop
+
+
 # =============================================================================
 # 단계4: 입력 시퀀스 / 모델
 # =============================================================================
@@ -198,39 +215,59 @@ def peak_scores(y_true, pred, cutoff):
 # =============================================================================
 # 단계5: CV로 구조·epoch·cutoff 선택
 # =============================================================================
-if args.variant:
+def run_cv(name, cfg):
+    """2-fold CV. 멈춤 판단 구간으로 epoch를 정하고, 7·8월은 예측(OOF)에만 쓴다."""
+    preds, trues, labels, dates, folds_used, epochs = [], [], [], [], [], []
+    for fold_name, tr, va in cv_folds():
+        keras.utils.set_random_seed(SEED)
+        inner, stop = stop_split(tr)
+        in_rows, st_rows, va_rows = rows_of(inner), rows_of(stop), rows_of(va)
+        Xin, yin, sy = make_xy(cfg, in_rows, in_rows)
+        Xst, yst, _ = make_xy(cfg, st_rows, in_rows)
+        Xva, _, _ = make_xy(cfg, va_rows, in_rows)
+        model = build(cfg, Xin.shape[1:])
+        hist = model.fit(Xin, yin, validation_data=(Xst, yst), epochs=args.max_epochs, batch_size=BATCH,
+                         verbose=0, callbacks=[keras.callbacks.EarlyStopping(
+                             monitor="val_loss", patience=PATIENCE, restore_best_weights=True)])
+        epochs.append(int(np.argmin(hist.history["val_loss"])) + 1)
+        preds.append(sy.inverse_transform(model.predict(Xva, verbose=0)).ravel())
+        trues.append(y_all[va_rows]); labels.append(va["label"].to_numpy())
+        dates.append(va.index); folds_used.append(np.repeat(fold_name, len(va)))
+        print(f"    {name} fold {fold_name}: 멈춤 판단 {stop.index.normalize().min():%m-%d}~{stop.index.normalize().max():%m-%d} "
+              f"(원본 {STOP_DAYS}일), 내부 학습 {len(inner)}행, best epoch {epochs[-1]}")
+    p, t, lab = map(np.concatenate, (preds, trues, labels))
+    row = {"variant": name, "cv_MAE": mean_absolute_error(t, p), "cv_RMSE": float(np.sqrt(mean_squared_error(t, p))),
+           "best_epoch": int(np.mean(epochs)), "fold_epochs": epochs}
+    oof_frame = pd.DataFrame({"Date": np.concatenate(dates), "fold": np.concatenate(folds_used),
+                              "label": lab, "actual": t, "forecast": p})
+    return row, oof_frame
+
+
+if args.variant and args.skip_cv:
     best_name, n_epochs, cutoff = args.variant, args.epochs, 167.0
-    print(f"[정보] CV 생략: {best_name}, epoch {n_epochs}, cutoff {cutoff:.0f}(기본값)")
+    print(f"[정보] CV 생략: {best_name}, epoch {n_epochs}, cutoff {cutoff:.0f}(기본값). OOF는 만들지 않음")
 else:
+    targets = {args.variant: VARIANTS[args.variant]} if args.variant else VARIANTS
     cv_rows, oof = [], {}
-    for name, cfg in VARIANTS.items():
-        preds, trues, labels, epochs = [], [], [], []
-        for _, tr, va in cv_folds():
-            keras.utils.set_random_seed(SEED)
-            tr_rows, va_rows = rows_of(tr), rows_of(va)
-            Xtr, ytr, sy = make_xy(cfg, tr_rows, tr_rows)
-            Xva, yva, _ = make_xy(cfg, va_rows, tr_rows)
-            model = build(cfg, Xtr.shape[1:])
-            hist = model.fit(Xtr, ytr, validation_data=(Xva, yva), epochs=args.max_epochs, batch_size=BATCH,
-                             verbose=0, callbacks=[keras.callbacks.EarlyStopping(
-                                 monitor="val_loss", patience=PATIENCE, restore_best_weights=True)])
-            epochs.append(int(np.argmin(hist.history["val_loss"])) + 1)
-            preds.append(sy.inverse_transform(model.predict(Xva, verbose=0)).ravel())
-            trues.append(y_all[va_rows]); labels.append(va["label"].to_numpy())
-        p, t, lab = map(np.concatenate, (preds, trues, labels))
-        cv_rows.append({"variant": name, "cv_MAE": mean_absolute_error(t, p),
-                        "cv_RMSE": float(np.sqrt(mean_squared_error(t, p))),
-                        "best_epoch": int(np.mean(epochs)), "fold_epochs": epochs})
-        oof[name] = (p, lab)
-        print(f"[CV] {name:<12} MAE {cv_rows[-1]['cv_MAE']:.3f} | RMSE {cv_rows[-1]['cv_RMSE']:.3f} | best epoch {epochs}")
+    for name, cfg in targets.items():
+        row, oof[name] = run_cv(name, cfg)
+        cv_rows.append(row)
+        print(f"[CV] {name:<12} MAE {row['cv_MAE']:.3f} | RMSE {row['cv_RMSE']:.3f} | best epoch {row['fold_epochs']}")
 
     cv = pd.DataFrame(cv_rows).sort_values("cv_MAE")
-    cv.to_csv(out("detail", f"{TAG}_cv.csv"), index=False)
+    if not args.variant:  # 구조 비교표는 전체 실행일 때만 덮어쓴다
+        cv.to_csv(out("detail", f"{TAG}_cv.csv"), index=False)
     best_name, n_epochs = cv.iloc[0]["variant"], int(cv.iloc[0]["best_epoch"])
-    oof_p, oof_lab = oof[best_name]
-    f1s = [peak_scores(oof_lab, oof_p, c)["F1"] for c in CUTOFF_GRID]
-    cutoff = float(CUTOFF_GRID[int(np.argmax(f1s))])
-    print(f"[선택] {best_name} (CV MAE {cv.iloc[0]['cv_MAE']:.3f}), 최종 epoch {n_epochs}, 피크 cutoff {cutoff:.0f}")
+    oof_best = oof[best_name]
+    if TARGET == "power":
+        f1s = [peak_scores(oof_best["label"], oof_best["forecast"], c)["F1"] for c in CUTOFF_GRID]
+        cutoff = float(CUTOFF_GRID[int(np.argmax(f1s))])
+        oof_best = oof_best.assign(predicted_label=(oof_best["forecast"] >= cutoff).astype(int))
+    else:
+        cutoff = 167.0
+    oof_best.to_csv(out("detail", f"{TAG}_oof.csv"), index=False)
+    print(f"[선택] {best_name} (CV MAE {cv.iloc[0]['cv_MAE']:.3f}), 최종 epoch {n_epochs}, 피크 cutoff {cutoff:.0f}"
+          f" (7·8월 OOF F1 최대) -> results/4_model_details/{TAG}_oof.csv 저장")
 
 # =============================================================================
 # 단계6: 최종 학습(9/1 이전 전체) + test 1회 평가
@@ -293,6 +330,9 @@ meta = {
     "input_shape": list(Xtr.shape[1:]), "channels": channel_names,
     "scaling": "MinMaxScaler (입력 채널별 x_scaler, target y_scaler), 학습 구간(9/1 이전)으로만 fit",
     "epochs": n_epochs, "batch_size": BATCH, "optimizer": "Adam(lr=1e-3)", "loss": "mse",
+    "early_stopping": (f"CV fold마다 학습 구간의 원본 일자 마지막 {STOP_DAYS}일로 판단 (7·8월 검증 구간은 채점에만 사용)"
+                       if not (args.variant and args.skip_cv) else "CV 생략 (--skip-cv), epoch 고정"),
+    "cutoff_selection": "7·8월 OOF F1 최대" if not (args.variant and args.skip_cv) else "기본값 167",
     "peak_threshold": peak_thr,
     "train_period": [str(train_part.index.min()), str(train_part.index.max())],
     "test_period": [str(test_part.index.min()), str(test_part.index.max())],
