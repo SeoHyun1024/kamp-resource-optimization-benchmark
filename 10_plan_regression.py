@@ -19,8 +19,10 @@
 
 실행:  python preprocessing.py -> python 08_operating_calendar.py -> python 06_regression.py -> python 10_plan_regression.py
 산출:  results/3_comparison/plan_regression_comparison.csv
+       results/3_comparison/plan_regression_fold_comparison.csv  (7월·8월 fold별 CV 성능)
        results/2_test_predictions/plan_regression_predictions.csv, plan_regression_daily_max.csv  (M4·M5 입력)
        results/4_model_details/plan_regression_<실험>_<모델>_cv.csv
+       results/4_model_details/plan_regression_oof.csv  (7·8월 CV 검증 구간 시간별 예측)
        results/5_models/plan_regression.joblib + _meta.json
 """
 import os
@@ -254,7 +256,7 @@ def run(set_name: str, key: str) -> dict:
           f"test MAE {test_m['MAE']:.2f}, 피크 시간 {test_m['peak_hour_MAE']:.2f}, 가동 시간 {test_m['on_hour_MAE']:.2f}, "
           f"일 최대 {test_m['daily_max_MAE']:.2f}")
     return {"set": set_name, "model": key, "features": feats, "params": {**params, "n_estimators": n_final},
-            "fitted": model, "pred_test": pred_test, "cv": cv_m, "test": test_m}
+            "fitted": model, "pred_test": pred_test, "pred_oof": best["_oof"], "cv": cv_m, "test": test_m}
 
 
 oof_frame = pd.concat([va for _, _, va in folds])
@@ -278,21 +280,42 @@ else:
 table = pd.DataFrame(rows).set_index("Model")
 table.to_csv(cm.out("cmp", "plan_regression_comparison.csv"), encoding="utf-8-sig")
 
+# fold별 CV 성능: 7월(평소 가동)과 8월(하계 휴무 포함)을 나눠 본다. 각 fold는 검증 시작 전 데이터로만 학습한 예측이다.
+per_fold, start = [], 0
+for name, _, va in folds:
+    part = slice(start, start + len(va))
+    for r in results:
+        per_fold.append({"Model": f"{r['set']} / {r['model']}", "fold": name, "hours": len(va),
+                          **report(va, r["pred_oof"][part])})
+    per_fold.append({"Model": "1주 전 같은 시각 (lag_168)", "fold": name, "hours": len(va), **report(va, va["lag_168"])})
+    start += len(va)
+fold_table = pd.DataFrame(per_fold).set_index(["Model", "fold"])
+fold_table.to_csv(cm.out("cmp", "plan_regression_fold_comparison.csv"), encoding="utf-8-sig")
+
 # M3 본 모델 = 가동 계획(B) 중 CV MAE가 가장 낮은 모델. 같은 알고리즘의 A·C를 함께 저장해 가동 정보 효과를 본다.
 by_name = {(r["set"], r["model"]): r for r in results}
 m3 = min((r for r in results if r["set"] == "B_가동계획"), key=lambda r: r["cv"]["MAE"])
 no_plan, prod_plan = by_name[("A_기본", m3["model"])], by_name[("C_생산계획", m3["model"])]
 
-pd.DataFrame({
-    "Date": test_df.index,
-    "actual_power": test_df["target_power"].to_numpy(),
-    "predicted_power": m3["pred_test"],
-    "predicted_power_no_plan": no_plan["pred_test"],
-    "predicted_power_prod_plan": prod_plan["pred_test"],
-    "plan_on": test_df["plan_on"].to_numpy(),
-    "day_type": cal["day_type"].reindex(test_df.index.normalize()).to_numpy(),
-    "actual_label": test_df["label"].to_numpy(),
-}).to_csv(cm.out("pred", "plan_regression_predictions.csv"), index=False, encoding="utf-8-sig")
+
+
+def prediction_table(frame: pd.DataFrame, key: str) -> pd.DataFrame:
+    """시간별 실제·예측 전력. key = "pred_test"(test) 또는 "pred_oof"(7·8월 CV 검증 구간)."""
+    return pd.DataFrame({
+        "Date": frame.index,
+        "actual_power": frame["target_power"].to_numpy(),
+        "predicted_power": m3[key],
+        "predicted_power_no_plan": no_plan[key],
+        "predicted_power_prod_plan": prod_plan[key],
+        "plan_on": frame["plan_on"].to_numpy(),
+        "day_type": cal["day_type"].reindex(frame.index.normalize()).to_numpy(),
+        "actual_label": frame["label"].to_numpy(),
+    })
+
+
+prediction_table(test_df, "pred_test").to_csv(cm.out("pred", "plan_regression_predictions.csv"), index=False, encoding="utf-8-sig")
+# 7·8월 CV out-of-fold 예측 (복제일 없는 구간). M4에서 test를 보지 않고 조정 규칙을 고를 때 쓴다.
+prediction_table(oof_frame, "pred_oof").to_csv(cm.out("detail", "plan_regression_oof.csv"), index=False, encoding="utf-8-sig")
 dm = daily_max(test_df, m3["pred_test"])
 dm.assign(error=dm["pred_max"] - dm["actual_max"]).to_csv(cm.out("pred", "plan_regression_daily_max.csv"), encoding="utf-8-sig")
 
@@ -306,6 +329,8 @@ cm.save_model("plan_regression", m3["fitted"], {
 })
 
 cols = ["시점", "MAE", "RMSE", "peak_hour_MAE", "on_hour_MAE", "switch_hour_MAE", "daily_max_MAE", "cv_MAE"]
+print("\n=== fold별 CV 성능 (7월 / 8월) ===")
+print(fold_table[["hours", "MAE", "RMSE", "peak_hour_MAE", "on_hour_MAE", "daily_max_MAE"]].round(2).unstack("fold").to_string())
 print("\n=== Test 회귀 성능 (하루 전 vs 1시간 전) ===")
 print(table[cols].round(2).to_string())
 gain, gain_on = no_plan["test"]["MAE"] - m3["test"]["MAE"], no_plan["test"]["on_hour_MAE"] - m3["test"]["on_hour_MAE"]
