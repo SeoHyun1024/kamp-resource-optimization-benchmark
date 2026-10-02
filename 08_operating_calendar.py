@@ -4,8 +4,8 @@
 실제 전력으로 날짜별 가동 여부와 날 유형을 판정해 휴무 캘린더를 정리한다.
 
 판정 규칙 (데이터에서 기준값을 계산, 9/1 이전 데이터로만 정함)
-    1) 가동일 기준: 일 최대전력을 정렬했을 때 가장 큰 간격의 가운데 값
-       (현재 데이터: 비가동일 최대 41, 가동일 최소 104 -> 기준 72.5)
+    1) 가동일 기준: preprocessing.py의 OFF_DAY_MAX_POWER(60)를 그대로 쓴다 (피크 모델의 prev_day_off와 같은 기준).
+       원본 일자의 일 최대전력이 비가동일 최대 41 / 가동일 최소 104로 나뉘므로, 기준이 그 사이에 있는지 assert로 확인한다.
     2) 시간 단위 가동 기준: 비가동일 전력의 최대값(41)을 넘으면 그 시간은 가동 중
     3) 날 유형
        - 비가동     : 일 최대전력 < 가동일 기준
@@ -46,13 +46,16 @@ def load_copied() -> dict:
 
 
 def thresholds(df: pd.DataFrame, copied: dict) -> tuple[float, float]:
-    """9/1 이전 '원본 일자'로 가동일 기준(일 최대전력 간격의 가운데)과 시간 단위 가동 기준을 정한다."""
+    """가동일 기준은 preprocessing.OFF_DAY_MAX_POWER(60)로 통일하고, 9/1 이전 '원본 일자'의 일 최대전력 분포로
+    그 기준이 비가동일·가동일 사이의 간격 안에 있는지 확인한다. 시간 단위 가동 기준은 비가동일 최대값(41)."""
     p = df.loc[df.index < pp.TEST_START, "power"]
     dm = p.groupby(p.index.normalize()).max()
     dm = dm.loc[~dm.index.isin(list(copied))]
     day_max = np.sort(dm.to_numpy())
     i = int(np.argmax(np.diff(day_max)))
-    day_thr = (day_max[i] + day_max[i + 1]) / 2
+    day_thr = float(pp.OFF_DAY_MAX_POWER)
+    assert day_max[i] < day_thr < day_max[i + 1], (
+        f"가동일 기준 {day_thr}이 비가동일 최대 {day_max[i]}와 가동일 최소 {day_max[i + 1]} 사이에 있지 않음")
     hour_thr = float(day_max[i])  # 비가동일의 최대값을 넘으면 가동 중
     return float(day_thr), hour_thr, float(day_max[i]), float(day_max[i + 1])
 
@@ -155,7 +158,7 @@ if __name__ == "__main__":
     df = pp.clean(pp.load_raw(), log=lambda *_: None)
     copied = load_copied()
     day_thr, hour_thr, lo, hi = thresholds(df, copied)
-    print(f"[기준, 원본 일자 기준] 비가동일 최대 {lo:.0f}, 가동일 최소 {hi:.0f} -> 가동일 기준 {day_thr:.1f}, 시간 단위 가동 기준 > {hour_thr:.0f}")
+    print(f"[기준, 원본 일자 기준] 비가동일 최대 {lo:.0f}, 가동일 최소 {hi:.0f} -> 가동일 기준 {day_thr:.0f} (preprocessing.OFF_DAY_MAX_POWER), 시간 단위 가동 기준 > {hour_thr:.0f}")
 
     cal = build_calendar(df, day_thr, hour_thr, copied)
     table, mism = evaluate(cal)
