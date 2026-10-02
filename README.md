@@ -20,6 +20,9 @@ kamp/
 ├─ ablation_copied_days.py      # (선택) 복제일 처리 방식 비교 실험
 ├─ ablation_missing.py          # (선택) 결측 처리 방식별 성능 비교 실험
 ├─ ablation_encoding.py         # (선택) RF·XGBoost 달력 변수 인코딩 비교 실험
+├─ ablation_fp_features.py      # (선택) 헛경보(FP) 원인 변수 실험
+├─ 08_operating_calendar.py     # 에이전트 M1: 실제 전력 기준 가동 캘린더
+├─ 09_peak_alert.py             # 에이전트 M2: RNN·RF 결합 2단계 피크 경보
 ├─ requirements.txt
 └─ results/                     # 실행하면 자동 생성
    ├─ 1_preprocessing/          # 전처리 결과
@@ -56,6 +59,11 @@ python 07_compare.py                                  # → results/3_comparison
 python ablation_copied_days.py   # 복제일 처리 비교, 약 1분
 python ablation_missing.py       # 결측 처리 비교, 약 4분
 python ablation_encoding.py      # 달력 인코딩 비교, 약 1분
+python ablation_fp_features.py   # 헛경보 원인 변수 실험, 약 3분
+
+# 5. 에이전트 모듈 (01·02 실행 후)
+python 08_operating_calendar.py  # M1 가동 캘린더, 수 초
+python 09_peak_alert.py          # M2 피크 경보, 수 초 (01·02 결과와 08 결과 사용)
 ```
 
 - 다시 실행하면 `results/`의 같은 이름 파일은 덮어써집니다. `07_compare.py`는 02~04의 결과로 앙상블을 만들므로 앞 스크립트를 다시 돌렸다면 함께 다시 실행합니다.
@@ -75,7 +83,7 @@ python ablation_encoding.py      # 달력 인코딩 비교, 약 1분
 | 공휴일 | 1/1, 설, 3/1, 5/5, 5/19, 8/16이 모두 가동일(일 최대전력 108~195) | 공휴일 변수를 쓰지 않음 |
 | 주말 | 토요일 37일 중 35일 가동 | 주말 변수 대신 `day_of_week` 사용 |
 | `month` | test(9월)가 학습 데이터에 없는 값 | 사용하지 않음 |
-| 달력 인코딩 | 정수·one-hot·sin/cos·정수+sin/cos를 RF·XGBoost로 비교. one-hot이 가장 나쁨(CV PR-AUC −0.006~−0.012) | 모델별로 선택: RF 정수+sin/cos, XGBoost 정수, CatBoost 범주형, RNN sin/cos (`ablation_encoding.py`) |
+| 달력 인코딩 | 정수·one-hot·sin/cos·정수+sin/cos를 RF·XGBoost로 비교. one-hot이 가장 나쁨(CV PR-AUC −0.003~−0.014) | 모델별로 선택: RF 정수+sin/cos, XGBoost 정수, CatBoost 범주형, RNN sin/cos (`ablation_encoding.py`) |
 
 **예측 대상**
 - `power` = max(15분, 30분, 45분, 60분): 해당 시간의 최대수요전력입니다.
@@ -130,8 +138,8 @@ python ablation_encoding.py      # 달력 인코딩 비교, 약 1분
 
 | 모델 | CV F1 | CV PR-AUC | Test F1 (95% CI) | Test PR-AUC | Test Recall |
 |---|---|---|---|---|---|
-| 규칙: 직전 값 (lag_1 ≥ 179) | – | – | 0.447 | 0.530 | 0.447 |
-| 규칙: 1주 전 같은 시각 (lag_168 ≥ 179) | – | – | 0.654 | 0.562 | 0.702 |
+| 규칙: 직전 값 (lag_1 ≥ 179) | – | – | 0.447 | 0.529 | 0.447 |
+| 규칙: 1주 전 같은 시각 (lag_168 ≥ 179) | – | – | 0.653 | 0.561 | 0.702 |
 | Random Forest | 0.821 | 0.892 | 0.729 [0.58, 0.83] | 0.767 | 0.915 |
 | XGBoost | 0.821 | 0.895 | 0.697 [0.57, 0.79] | 0.723 | 0.809 |
 | CatBoost | 0.827 | 0.905 | 0.679 [0.54, 0.78] | 0.738 | 0.809 |
@@ -163,7 +171,7 @@ python ablation_encoding.py      # 달력 인코딩 비교, 약 1분
 ### 해석
 
 1. **지도학습 모델은 모두 규칙 기반 기준선보다 좋습니다.** RF, XGBoost, CatBoost, RNN, 회귀 모델의 F1은 0.68~0.73입니다.
-   - 규칙 기반 기준선은 직전 값 0.447, 1주 전 같은 시각 0.654입니다.
+   - 규칙 기반 기준선은 직전 값 0.447, 1주 전 같은 시각 0.653입니다.
 2. **모델 간 차이는 통계적으로 확정할 수 없습니다.**
    - test가 14일(피크 47건)뿐이라 F1 95% 신뢰구간 폭이 약 ±0.15입니다.
    - 신뢰구간은 일 단위 블록 부트스트랩(2000회)으로 구했습니다.
@@ -177,11 +185,70 @@ python ablation_encoding.py      # 달력 인코딩 비교, 약 1분
 5. **중요 변수**: 1·2주 전 같은 시각 전력(`same_hour_2w_max`), 직전 시간 마지막 15분 값(`q60_lag1`), 시간대(`hour`)가 모든 모델에서 상위권입니다.
    - 즉 공장의 **주간 가동 패턴**과 **직전 추세**가 피크를 가장 잘 설명합니다.
 
+## 에이전트 확장 (진행 중)
+
+피크 예측 결과를 운영 의사결정으로 잇기 위해 기능을 모듈로 나눠 만들고 있습니다. 판단은 규칙과 검증된 모델로 하고, 최종 실행은 담당자가 승인하는 구조입니다.
+
+| 모듈 | 역할 | 스크립트 | 상태 |
+|---|---|---|---|
+| M1 가동 캘린더 | 실제 전력으로 가동일·날 유형 판정 | `08_operating_calendar.py` | 완료 |
+| M2 피크 경보 | RNN(주의) + RF(확정) 2단계 경보, 근거 문구 생성 | `09_peak_alert.py` | 완료 |
+| M3 전력 예측 | 가동 계획을 넣은 하루 전 전력 예측(회귀) | – | 예정 |
+| M4 일정 조정 | 피크 시간 부하 이동 시 최대수요·기본요금 절감 계산 | – | 예정 |
+| M5 추천 리포트 | M1~M4 결과를 운영 리포트로 출력 | – | 예정 |
+
+### M1 가동 캘린더
+
+- 판정 기준은 9/1 이전 **원본 일자**에서 계산합니다. 일 최대전력이 비가동일 최대 41, 가동일 최소 104로 나뉘어 가동일 기준은 72.5입니다. 시간 단위로는 41을 넘으면 가동 중으로 봅니다.
+- 날 유형: 종일 가동, 가동 시작일(0시 꺼짐 → 이후 가동), 가동 종료일(23시 꺼짐), 중간 정지, 비가동
+- 257일 중 115일은 다른 날짜의 전력을 복사한 증강일입니다. 증강일은 달력·생산 기록과 비교하면 왜곡되므로(예: 2/11 공휴일 = 1/11 월요일 가동 패턴 복사) **원본 일자를 주 결과로** 보고합니다.
+
+| 지표 | 원본 (주 결과) | 증강 | 전체 |
+|---|---|---|---|
+| 일수 | 142 | 115 | 257 |
+| 생산 기록 일치율 | 93.7% (불일치 9일) | 94.8% (6일) | 94.2% (15일) |
+| 공휴일 가동 | 4/4 | 3/3 | 7/7 |
+| 토요일 가동 | 20/22 | 15/15 | 35/37 |
+| 일요일 가동 | 6/24 | 2/13 | 8/37 |
+| 평일 비가동 | 6/92 | 12/84 | 18/176 |
+| 달력과 다른 날 | 36 (25.4%) | 32 (27.8%) | 68 (26.5%) |
+
+- 원본 공휴일 4일(1/1, 5/5, 5/19, 8/16)이 모두 가동했고, 토요일은 대부분 오전에 끝나는 가동 종료일, 월요일은 7시에 켜지는 가동 시작일입니다.
+- 원본 평일 휴무는 1/5와 하계 휴무(8/2~8/6) 6일뿐입니다. 증강일의 평일 비가동 12일은 모두 1/5 패턴의 복사본입니다.
+- 생산 기록 불일치일에는 시간 값이 깨져 있던 7/13, 7/15가 포함되어, 두 날의 데이터 품질 문제가 다시 확인됩니다.
+
+### M2 피크 경보
+
+| 단계 | 조건 | 목적 |
+|---|---|---|
+| 주의 | RNN 예측 전력 ≥ 167 | 피크를 놓치지 않기 |
+| 확정 | 주의 + RF 위험확률 ≥ 0.55 | 실제 조치 대상 |
+
+기준값은 `5_models/*_meta.json`에서 읽습니다. 전환 시각(13·15·16·17시) 경보에는 헛경보 확인 안내가 붙습니다.
+
+| 단계 (test 14일, 피크 47건) | 경보 | 맞힌 피크 | 헛경보 | 놓친 피크 | Precision | Recall | F1 | 하루당 헛경보 |
+|---|---|---|---|---|---|---|---|---|
+| 주의 이상 | 76 | 45 | 31 | 2 | 0.592 | 0.957 | 0.732 | 2.2 |
+| 확정 | 69 | 43 | 26 | 4 | 0.623 | 0.915 | 0.741 | 1.9 |
+| 참고: RF 단독 | 71 | 43 | 28 | 4 | 0.606 | 0.915 | 0.729 | 2.0 |
+
+- RF만 위험인 시간은 2건이며 모두 피크가 아니어서 정상으로 둡니다.
+- 확정 규칙(RF AND RNN)은 test 결과를 보고 제시한 후보입니다. RNN은 OOF 예측이 없어 CV로 검증하지 못했으므로, 운영 데이터로 재검증해야 합니다.
+
+### 헛경보(FP) 원인 분석 (`ablation_fp_features.py`)
+
+- CV(7·8월)에서 RF 헛경보는 가동 전환 시각(13시 점심 직후, 15~17시 퇴근 전후)에 약 57%가 몰립니다.
+  - 15~17시: 직전 시간이 이미 피크여서 모델이 피크가 이어진다고 보지만, 실제로는 내려가며 170~178에 머뭅니다.
+  - 13시: 직전 값(점심 시간)이 낮아 정보가 없고 2주 전 같은 시각 최대에 의존합니다.
+- 헛경보의 약 64%는 실제 전력 170~178의 경계 사례입니다.
+- 시간 내 하락, 피크 지속, 시각별 전환 패턴, 생산 변화 변수(G1~G4)를 추가하면 RF CV 헛경보가 약 14% 줄지만 놓친 피크가 늘고, test에서는 개선이 없었습니다. 교대·점심 시각 같은 작업 스케줄 정보가 데이터에 없어서이며, 향후 과제로 둡니다.
+
 ## 결과 파일 (`results/`)
 
 | 폴더 | 파일 | 내용 |
 |---|---|---|
 | `1_preprocessing/` | `clean_hourly.csv` | 정제된 시간 단위 데이터 |
+| | `operating_calendar.csv` | M1: 날짜별 가동 여부·날 유형·가동 시간·생산 기록·달력 구분·증강일 여부 |
 | | `peak_dataset.csv` | 모델 공통 feature 38개 + target + 라벨 |
 | | `copied_days.json` | 복제일 → 원본 날짜 |
 | | `preprocessing_report.txt` | 전처리 진단 로그 |
@@ -191,18 +258,26 @@ python ablation_encoding.py      # 달력 인코딩 비교, 약 1분
 | | `xgboost_reg_predictions.csv`, `lightgbm_reg_predictions.csv` | 회귀: `predicted_power` 포함 |
 | | `isolation_forest_predictions.csv` | `anomaly_score` 포함 |
 | | `persistence_predictions.csv`, `persistence_lag168_predictions.csv` | 규칙 기반 기준선 |
+| | `peak_alerts.csv` | M2: 시간별 경보 단계, RNN 예측값, RF 확률, 근거 문구, 전환 시각 안내, 날 유형 |
 | `3_comparison/` | `final_comparison.csv` | **전체 모델 test 성능 + F1 95% 신뢰구간 (보고서용)** |
 | | `model_comparison.csv` | 모델별 test 성능 |
 | | `regression_comparison.csv` | 회귀 MAE/RMSE |
 | | `rnn_metrics.txt` | RNN test 성능 요약 |
 | | `missing_ablation_summary.csv` | 결측 처리 방식별 성능 비교 요약 (`ablation_missing.py`) |
 | | `encoding_ablation_summary.csv` | 달력 인코딩별 성능 비교 요약 (`ablation_encoding.py`) |
+| | `fp_feature_ablation.csv` | 헛경보 원인 변수 실험 결과 (`ablation_fp_features.py`) |
+| | `operating_calendar_summary.csv`, `operating_calendar_types.csv` | M1 평가지표(원본·증강·전체), 날 유형 × 요일 표(원본) |
+| | `peak_alert_summary.csv` | M2 경보 단계별 성능 |
 | `4_model_details/` | `*_cv.csv`, `*_oof.csv`, `*_importance.csv` | grid 탐색 결과, CV out-of-fold 예측, 변수 중요도 |
 | | `rnn_cv.csv` | RNN 구조별 CV 결과 (CV 포함 실행 시) |
 | | `missing_ablation_real.csv`, `missing_ablation_simulated.csv`, `encoding_ablation.csv` | 결측 처리·인코딩 비교 상세 |
+| | `operating_calendar_mismatch.csv` | M1 생산 기록 불일치일 목록 (증강일 여부·원본 날짜 포함) |
+| | `peak_alert_daily.csv` | M2 날짜별 피크·주의·확정·놓친 피크 수 |
 | `5_models/` | `random_forest.joblib`, `xgboost_classifier.json`, `catboost_classifier.cbm`, `isolation_forest.joblib`, `xgboost_reg.joblib`, `lightgbm_reg.joblib`, `rnn.keras` (+ `rnn_scalers.joblib`) | 9/1 이전 전체로 학습한 최종 모델 |
 | | `*_meta.json` | 모델별 메타데이터: 판정 기준(threshold·cutoff), feature 목록과 순서, 파라미터, 학습·test 기간, 피크 기준 179, CV·test 성능 |
 | `6_figures/` | `rnn_forecast_plot.png` | RNN 테스트 예측 그래프 |
+| | `operating_calendar.png` | M1 가동 캘린더 |
+| | `peak_alert_timeline.png` | M2 test 기간 실제 전력과 경보 시점 |
 
 ## 저장된 모델 불러오기
 
