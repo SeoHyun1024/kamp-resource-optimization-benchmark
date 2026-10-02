@@ -18,6 +18,9 @@
 평가 (판정 기준과 독립적인 기록과 비교)
     - 생산 기록 일치율: 전력 기준 가동 여부 vs 생산량 > 0 인 날
     - 달력과의 불일치: 공휴일 가동, 주말 가동, 평일 비가동 일수
+    - 257일 중 115일은 다른 날짜의 15분 전력값을 복사한 증강일이다. 복사일은 전력 패턴이 원본 날짜의
+      것이라 달력·생산 기록과 비교하면 왜곡된다(예: 2/11 공휴일 = 1/11 월요일 가동 패턴 복사).
+      따라서 기준값은 원본 일자로만 정하고, 평가지표는 원본 / 증강 / 전체를 나눠 보고하며 원본을 주 결과로 쓴다.
 """
 import matplotlib
 matplotlib.use("Agg")
@@ -33,17 +36,28 @@ DOW_KO = ["월", "화", "수", "목", "금", "토", "일"]
 TYPES = ["종일 가동", "가동 시작일", "가동 종료일", "중간 정지", "부분 가동", "비가동"]
 
 
-def thresholds(df: pd.DataFrame) -> tuple[float, float]:
-    """9/1 이전 데이터로 가동일 기준(일 최대전력 간격의 가운데)과 시간 단위 가동 기준을 정한다."""
+def load_copied() -> dict:
+    import json
+    try:
+        with open(pp.out("prep", "copied_days.json"), encoding="utf-8") as f:
+            return {pd.Timestamp(k): pd.Timestamp(v) for k, v in json.load(f).items()}
+    except FileNotFoundError:
+        return {}
+
+
+def thresholds(df: pd.DataFrame, copied: dict) -> tuple[float, float]:
+    """9/1 이전 '원본 일자'로 가동일 기준(일 최대전력 간격의 가운데)과 시간 단위 가동 기준을 정한다."""
     p = df.loc[df.index < pp.TEST_START, "power"]
-    day_max = np.sort(p.groupby(p.index.normalize()).max().to_numpy())
+    dm = p.groupby(p.index.normalize()).max()
+    dm = dm.loc[~dm.index.isin(list(copied))]
+    day_max = np.sort(dm.to_numpy())
     i = int(np.argmax(np.diff(day_max)))
     day_thr = (day_max[i] + day_max[i + 1]) / 2
     hour_thr = float(day_max[i])  # 비가동일의 최대값을 넘으면 가동 중
     return float(day_thr), hour_thr, float(day_max[i]), float(day_max[i + 1])
 
 
-def build_calendar(df: pd.DataFrame, day_thr: float, hour_thr: float) -> pd.DataFrame:
+def build_calendar(df: pd.DataFrame, day_thr: float, hour_thr: float, copied: dict) -> pd.DataFrame:
     on = (df["power"] > hour_thr).astype(int)
     date = df.index.normalize()
     g = df.assign(on=on, hour=df.index.hour).groupby(date)
@@ -70,38 +84,39 @@ def build_calendar(df: pd.DataFrame, day_thr: float, hour_thr: float) -> pd.Data
     cal["calendar_says_off"] = (cal["calendar_type"] != "평일").astype(int)
     cal["production_operating"] = (cal["production_sum"] > 0).astype(int)
     cal["split"] = np.where(cal.index >= pp.TEST_START, "test", "train")
-    # 증강 복제일 표시: 복제일의 날 유형은 원본 날짜의 패턴이므로 M3 패턴 생성 시 제외한다
-    try:
-        import json
-        with open(pp.out("prep", "copied_days.json"), encoding="utf-8") as f:
-            copied = {pd.Timestamp(k): pd.Timestamp(v) for k, v in json.load(f).items()}
-    except FileNotFoundError:
-        copied = {}
+    # 증강 복제일 표시: 복제일의 날 유형은 원본 날짜의 패턴이므로 평가·M3 패턴 생성 시 분리한다
     cal["is_copied_day"] = cal.index.isin(list(copied)).astype(int)
     cal["copied_from"] = [copied[d].date() if d in copied else "" for d in cal.index]
     return cal
 
 
-def evaluate(cal: pd.DataFrame) -> dict:
+def _metrics(cal: pd.DataFrame) -> dict:
     agree = (cal["operating"] == cal["production_operating"])
-    mism = cal.loc[~agree]
-    res = {
+    hol, wk = cal["calendar_type"] == "공휴일", cal["calendar_type"] == "평일"
+    sat, sun = cal["dow"] == "토", cal["dow"] == "일"
+    return {
         "days": len(cal),
         "operating_days": int(cal["operating"].sum()),
         "non_operating_days": int((cal["operating"] == 0).sum()),
-        "production_agreement": float(agree.mean()),
+        "production_agreement": round(float(agree.mean()), 4),
+        "production_mismatch_days": int((~agree).sum()),
         "power_on_production_zero": int(((cal["operating"] == 1) & (cal["production_operating"] == 0)).sum()),
         "power_off_production_pos": int(((cal["operating"] == 0) & (cal["production_operating"] == 1)).sum()),
-        "holiday_operating": int(((cal["calendar_type"] == "공휴일") & (cal["operating"] == 1)).sum()),
-        "holidays": int((cal["calendar_type"] == "공휴일").sum()),
-        "saturday_operating": int(((cal["dow"] == "토") & (cal["operating"] == 1)).sum()),
-        "saturdays": int((cal["dow"] == "토").sum()),
-        "sunday_operating": int(((cal["dow"] == "일") & (cal["operating"] == 1)).sum()),
-        "sundays": int((cal["dow"] == "일").sum()),
-        "weekday_non_operating": int(((cal["calendar_type"] == "평일") & (cal["operating"] == 0)).sum()),
+        "holidays": int(hol.sum()), "holiday_operating": int((hol & (cal["operating"] == 1)).sum()),
+        "saturdays": int(sat.sum()), "saturday_operating": int((sat & (cal["operating"] == 1)).sum()),
+        "sundays": int(sun.sum()), "sunday_operating": int((sun & (cal["operating"] == 1)).sum()),
+        "weekdays": int(wk.sum()), "weekday_non_operating": int((wk & (cal["operating"] == 0)).sum()),
         "calendar_mismatch_days": int((cal["calendar_says_off"] == cal["operating"]).sum()),
+        "calendar_mismatch_rate": round(float((cal["calendar_says_off"] == cal["operating"]).mean()), 4),
     }
-    return res, mism
+
+
+def evaluate(cal: pd.DataFrame) -> tuple[pd.DataFrame, pd.DataFrame]:
+    """원본(주 결과) / 증강 / 전체로 나눠 평가지표를 계산한다."""
+    groups = {"원본": cal[cal["is_copied_day"] == 0], "증강": cal[cal["is_copied_day"] == 1], "전체": cal}
+    table = pd.DataFrame({k: _metrics(v) for k, v in groups.items()})
+    mism = cal.loc[cal["operating"] != cal["production_operating"]]
+    return table, mism
 
 
 def plot_calendar(cal: pd.DataFrame, path: str) -> None:
@@ -138,30 +153,39 @@ if __name__ == "__main__":
         pass
 
     df = pp.clean(pp.load_raw(), log=lambda *_: None)
-    day_thr, hour_thr, lo, hi = thresholds(df)
-    print(f"[기준] 비가동일 최대 {lo:.0f}, 가동일 최소 {hi:.0f} -> 가동일 기준 {day_thr:.1f}, 시간 단위 가동 기준 > {hour_thr:.0f}")
+    copied = load_copied()
+    day_thr, hour_thr, lo, hi = thresholds(df, copied)
+    print(f"[기준, 원본 일자 기준] 비가동일 최대 {lo:.0f}, 가동일 최소 {hi:.0f} -> 가동일 기준 {day_thr:.1f}, 시간 단위 가동 기준 > {hour_thr:.0f}")
 
-    cal = build_calendar(df, day_thr, hour_thr)
-    res, mism = evaluate(cal)
+    cal = build_calendar(df, day_thr, hour_thr, copied)
+    table, mism = evaluate(cal)
     cal.to_csv(pp.out("prep", "operating_calendar.csv"), encoding="utf-8-sig")
-
-    summary = pd.Series({**res, "day_threshold": day_thr, "hour_threshold": hour_thr})
-    summary.to_csv(pp.out("cmp", "operating_calendar_summary.csv"), header=["value"], encoding="utf-8-sig")
+    table.loc["day_threshold"] = day_thr
+    table.loc["hour_threshold"] = hour_thr
+    table.to_csv(pp.out("cmp", "operating_calendar_summary.csv"), encoding="utf-8-sig")
     mism.to_csv(pp.out("detail", "operating_calendar_mismatch.csv"), encoding="utf-8-sig")
-    type_table = pd.crosstab(cal["day_type"], cal["dow"]).reindex(index=TYPES, columns=DOW_KO, fill_value=0)
+    orig = cal[cal["is_copied_day"] == 0]
+    type_table = pd.crosstab(orig["day_type"], orig["dow"]).reindex(index=TYPES, columns=DOW_KO, fill_value=0)
     type_table.to_csv(pp.out("cmp", "operating_calendar_types.csv"), encoding="utf-8-sig")
     plot_calendar(cal, pp.out("fig", "operating_calendar.png"))
 
-    print(f"\n=== 가동 판정 ({res['days']}일) ===")
-    print(f"가동 {res['operating_days']}일 / 비가동 {res['non_operating_days']}일")
-    print(f"생산 기록 일치율 {res['production_agreement']:.1%} "
-          f"(전력상 가동인데 생산 0: {res['power_on_production_zero']}일, 전력상 비가동인데 생산 있음: {res['power_off_production_pos']}일)")
-    print(f"\n=== 달력과의 차이 ===")
-    print(f"공휴일 {res['holidays']}일 중 가동 {res['holiday_operating']}일 | 토요일 {res['saturdays']}일 중 가동 {res['saturday_operating']}일 | "
-          f"일요일 {res['sundays']}일 중 가동 {res['sunday_operating']}일 | 평일 비가동 {res['weekday_non_operating']}일")
-    print(f"달력(평일=가동, 주말·공휴일=휴무)과 다른 날: {res['calendar_mismatch_days']}일 ({res['calendar_mismatch_days']/res['days']:.1%})")
-    print(f"\n=== 날 유형 x 요일 ===\n{type_table.to_string()}")
+    t = table.astype(object)
+    def fr(col, a, b):
+        return f"{int(t.loc[a, col])}/{int(t.loc[b, col])}"
+    view = pd.DataFrame({col: {
+        "일수": int(t.loc["days", col]),
+        "생산 기록 일치율": f"{float(t.loc['production_agreement', col]):.1%}",
+        "생산 불일치일": int(t.loc["production_mismatch_days", col]),
+        "공휴일 가동": fr(col, "holiday_operating", "holidays"),
+        "토요일 가동": fr(col, "saturday_operating", "saturdays"),
+        "일요일 가동": fr(col, "sunday_operating", "sundays"),
+        "평일 비가동": fr(col, "weekday_non_operating", "weekdays"),
+        "달력과 다른 날": f"{int(t.loc['calendar_mismatch_days', col])} ({float(t.loc['calendar_mismatch_rate', col]):.1%})",
+    } for col in ["원본", "증강", "전체"]})
+    print("\n=== 평가지표 (주 결과: 원본 일자) ===")
+    print(view.to_string())
+    print(f"\n=== 날 유형 x 요일 (원본 일자) ===\n{type_table.to_string()}")
     print(f"\n=== test 기간(9/1~9/14) 캘린더 ===")
     print(cal.loc[cal["split"] == "test", ["dow", "calendar_type", "day_type", "day_max", "on_hours", "first_on_hour", "last_on_hour"]].to_string())
     if len(mism):
-        print(f"\n[생산 기록 불일치일 {len(mism)}일]\n" + mism[["dow", "calendar_type", "day_type", "day_max", "on_hours", "production_sum"]].to_string())
+        print(f"\n[생산 기록 불일치일 {len(mism)}일]\n" + mism[["dow", "calendar_type", "day_type", "day_max", "on_hours", "production_sum", "is_copied_day", "copied_from"]].to_string())
