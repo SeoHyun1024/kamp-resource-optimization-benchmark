@@ -28,10 +28,12 @@
     "dow_cos"
   ],
   "scaling": "MinMaxScaler (입력 채널별 x_scaler, target y_scaler), 학습 구간(9/1 이전)으로만 fit",
-  "epochs": 90,
+  "epochs": 148,
   "batch_size": 128,
   "optimizer": "Adam(lr=1e-3)",
   "loss": "mse",
+  "early_stopping": "CV fold마다 학습 구간의 원본 일자 마지막 14일로 판단 (7·8월 검증 구간은 채점에만 사용)",
+  "cutoff_selection": "7·8월 OOF F1 최대",
   "peak_threshold": 179.0,
   "train_period": [
     "2021-01-15 00:00:00",
@@ -45,12 +47,12 @@
   "python": "3.11.9",
   "tensorflow": "2.21.0",
   "test": {
-    "MAE": 6.718535315422785,
-    "RMSE": 9.131044751231022,
-    "Precision": 0.5921,
-    "Recall": 0.9574,
-    "F1": 0.7317
+    "MAE": 6.444884907631647,
+    "RMSE": 8.755218804912019,
+    "Precision": 0.56,
+    "Recall": 0.8936,
+    "F1": 0.6885
   },
-  "decision_rule": "predict >= 167.0",
-  "peak_cutoff": 167.0
+  "decision_rule": "predict >= 169.0",
+  "peak_cutoff": 169.0
 }
