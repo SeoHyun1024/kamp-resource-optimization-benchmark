@@ -1,0 +1,16 @@
+{
+  "script": "09_peak_alert.py",
+  "rnn_cutoff": 169.0,
+  "rf_threshold": 0.55,
+  "peak_threshold": 179.0,
+  "rules": {
+    "주의": "RF 단독",
+    "확정": "AND"
+  },
+  "criteria": {
+    "주의": "F2",
+    "확정": "F0.5"
+  },
+  "selection_data": "CV OOF ['2021-07', '2021-08'] (복제일 제외), test 미사용",
+  "tie_rule": "1위와 차이의 날짜 부트스트랩(2000회) 95% 구간이 0 포함 -> 단순한 규칙"
+}
