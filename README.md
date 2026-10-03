@@ -45,7 +45,8 @@ pip install -r requirements.txt
 python preprocessing.py                               # → results/1_preprocessing/
 
 # 2. 모델 학습·평가 (01~06은 서로 독립)
-python 01_rnn.py --variant D_multi_gru --epochs 90   # 약 10~15분 (옵션 없이 실행하면 구조 4종 CV 포함 약 1시간)
+python 01_rnn.py --variant D_multi_gru               # GRU CV + OOF 저장 + 최종 학습, 약 15~25분 (옵션 없이 실행하면 구조 4종 CV 포함 약 1시간)
+# python 01_rnn.py --skip-cv --epochs 90              # CV 없이 최종 학습만 (rnn_oof.csv가 안 생겨 09는 실행 불가)
 python 02_random_forest.py                            # 약 2분
 python 03_xgboost.py                                  # 약 30초
 python 04_catboost.py                                 # 약 1분
@@ -63,9 +64,10 @@ python ablation_fp_features.py   # 헛경보 원인 변수 실험, 약 3분
 
 # 5. 에이전트 모듈 (01·02 실행 후)
 python 08_operating_calendar.py  # M1 가동 캘린더, 수 초
-python 09_peak_alert.py          # M2 피크 경보, 수 초 (01·02 결과와 08 결과 사용)
+python 09_peak_alert.py          # M2 피크 경보, 약 10초 (01·02의 OOF·test 예측과 08 결과 사용)
 ```
 
+- `01_rnn.py`의 early stopping 방식을 바꿨으므로 다시 실행하면 RNN cutoff와 test 결과(아래 결과 표의 RNN 행, 0.732 등)가 달라질 수 있습니다. 이 경우 07·09를 함께 다시 실행하고 결과 표를 갱신합니다.
 - 다시 실행하면 `results/`의 같은 이름 파일은 덮어써집니다. `07_compare.py`는 02~04의 결과로 앙상블을 만들므로 앞 스크립트를 다시 돌렸다면 함께 다시 실행합니다.
 
 - 모든 스크립트는 `kamp` 폴더에서 실행합니다.
@@ -116,9 +118,10 @@ python 09_peak_alert.py          # M2 피크 경보, 수 초 (01·02 결과와 0
 | CatBoost | `04_catboost.py` | 공통 feature **38개** | `hour`·`day_of_week`를 문자열로 바꿔 `cat_features`(범주형)로 지정. 나머지는 수치 그대로 |
 | Isolation Forest | `05_isolation_forest.py` | 전력 관련 feature **21개** | 달력·외생변수를 빼고 전력 lag·15분 값·rolling·주간 패턴만 사용. 학습은 가동 시간대(전일 가동 & 08~18시) 행으로만 함. 점수는 `-decision_function`이며, `lag_1`이 학습 중앙값보다 낮은 시점의 이상은 피크 위험이 아니므로 최저 점수로 보정. 판정 경계는 학습 점수 상위 40% |
 | XGBoost·LightGBM 회귀 | `06_regression.py` | 공통 feature **38개** | 라벨 대신 연속값 `target_power`를 예측 대상으로 사용. 예측값 ≥ cutoff(XGB 171, LGBM 173, CV로 선택)이면 피크로 판정 |
-| RNN (GRU) | `01_rnn.py` | 시퀀스 **168시간 × 8채널** | `peak_dataset.csv`를 쓰지 않고 같은 정제 과정을 스스로 수행한 뒤, 예측 시점 T마다 T−168~T−1 구간을 잘라 시퀀스를 만듦. 채널은 power, 15분 값, 60분 값, 생산량, 시간 sin/cos, 요일 sin/cos. 입력·target 모두 MinMax 정규화. 예측 시점은 다른 모델과 같은 2021-01-15부터. 예측값 ≥ 167이면 피크로 판정 |
+| RNN (GRU) | `01_rnn.py` | 시퀀스 **168시간 × 8채널** | `peak_dataset.csv`를 쓰지 않고 같은 정제 과정을 스스로 수행한 뒤, 예측 시점 T마다 T−168~T−1 구간을 잘라 시퀀스를 만듦. 채널은 power, 15분 값, 60분 값, 생산량, 시간 sin/cos, 요일 sin/cos. 입력·target 모두 MinMax 정규화. 예측 시점은 다른 모델과 같은 2021-01-15부터. 예측값 ≥ cutoff면 피크로 판정 (cutoff는 CV OOF F1 최대로 선택, 이전 실행 167) |
 
 **변환에서 지킨 원칙**
+- RNN early stopping은 검증 구간(7·8월)이 아니라 **각 fold 학습 구간의 마지막 원본 14일**(복제일 제외)로 멈출 시점을 정합니다. 검증 구간으로 멈추면 그 구간에 맞춘 셈이 되어 CV 성능이 실제보다 좋게 나오기 때문입니다. 최종 모델은 CV에서 나온 fold별 best epoch의 평균만큼 학습합니다.
 - 학습 데이터로 무언가를 맞추는 변환은 **학습 구간으로만** 맞춥니다. MinMax 스케일러, Isolation Forest의 중앙값·판정 경계, 분류 threshold·회귀 cutoff가 여기에 해당하고, CV에서는 fold마다 다시 맞춥니다.
 - sin/cos, 범주형 지정, feature 선택처럼 값을 학습하지 않는 변환은 데이터 전체에 같은 규칙으로 적용합니다.
 - 모델별 선택의 근거:
@@ -192,14 +195,14 @@ python 09_peak_alert.py          # M2 피크 경보, 수 초 (01·02 결과와 0
 | 모듈 | 역할 | 스크립트 | 상태 |
 |---|---|---|---|
 | M1 가동 캘린더 | 실제 전력으로 가동일·날 유형 판정 | `08_operating_calendar.py` | 완료 |
-| M2 피크 경보 | RNN(주의) + RF(확정) 2단계 경보, 근거 문구 생성 | `09_peak_alert.py` | 완료 |
+| M2 피크 경보 | RNN·RF 결합 2단계 경보(조합은 CV OOF로 선택), 근거 문구 생성 | `09_peak_alert.py` | 완료 (재실행 후 수치 갱신 필요) |
 | M3 전력 예측 | 가동 계획을 넣은 하루 전 전력 예측(회귀) | – | 예정 |
 | M4 일정 조정 | 피크 시간 부하 이동 시 최대수요·기본요금 절감 계산 | – | 예정 |
 | M5 추천 리포트 | M1~M4 결과를 운영 리포트로 출력 | – | 예정 |
 
 ### M1 가동 캘린더
 
-- 판정 기준은 9/1 이전 **원본 일자**에서 계산합니다. 일 최대전력이 비가동일 최대 41, 가동일 최소 104로 나뉘어 가동일 기준은 72.5입니다. 시간 단위로는 41을 넘으면 가동 중으로 봅니다.
+- 판정 기준은 9/1 이전 **원본 일자**에서 계산합니다. 일 최대전력이 비가동일 최대 41, 가동일 최소 104로 나뉩니다. 가동일 기준은 피크 모델의 `prev_day_off`와 같은 `preprocessing.OFF_DAY_MAX_POWER` = 60을 쓰며(일 최대 < 60이면 비가동), 60이 41과 104 사이에 있는지 실행 시 확인합니다. 41~104 사이 값을 갖는 원본 일자가 없어 72.5를 쓸 때와 판정 결과는 같습니다. 시간 단위로는 41을 넘으면 가동 중으로 봅니다.
 - 날 유형: 종일 가동, 가동 시작일(0시 꺼짐 → 이후 가동), 가동 종료일(23시 꺼짐), 중간 정지, 비가동
 - 257일 중 115일은 다른 날짜의 전력을 복사한 증강일입니다. 증강일은 달력·생산 기록과 비교하면 왜곡되므로(예: 2/11 공휴일 = 1/11 월요일 가동 패턴 복사) **원본 일자를 주 결과로** 보고합니다.
 
@@ -219,21 +222,30 @@ python 09_peak_alert.py          # M2 피크 경보, 수 초 (01·02 결과와 0
 
 ### M2 피크 경보
 
-| 단계 | 조건 | 목적 |
-|---|---|---|
-| 주의 | RNN 예측 전력 ≥ 167 | 피크를 놓치지 않기 |
-| 확정 | 주의 + RF 위험확률 ≥ 0.55 | 실제 조치 대상 |
+RNN(전력 회귀 → cutoff)과 RF(피크 확률 → threshold) 두 모델의 판단을 묶어 **주의 → 확정** 2단계 경보를 냅니다. 각 모델의 기준값(cutoff, threshold)은 01·02가 CV OOF로 고른 값을 `5_models/*_meta.json`에서 읽습니다.
 
-기준값은 `5_models/*_meta.json`에서 읽습니다. 전환 시각(13·15·16·17시) 경보에는 헛경보 확인 안내가 붙습니다.
+**조합 선택 방법 (test 미사용)**
 
-| 단계 (test 14일, 피크 47건) | 경보 | 맞힌 피크 | 헛경보 | 놓친 피크 | Precision | Recall | F1 | 하루당 헛경보 |
-|---|---|---|---|---|---|---|---|---|
-| 주의 이상 | 76 | 45 | 31 | 2 | 0.592 | 0.957 | 0.732 | 2.2 |
-| 확정 | 69 | 43 | 26 | 4 | 0.623 | 0.915 | 0.741 | 1.9 |
-| 참고: RF 단독 | 71 | 43 | 28 | 4 | 0.606 | 0.915 | 0.729 | 2.0 |
+어떤 조합을 쓸지는 test가 아니라 CV(7·8월, 복제일 제외) OOF 예측으로 정하고, 기준은 결과를 보기 전에 정해 두었습니다.
 
-- RF만 위험인 시간은 2건이며 모두 피크가 아니어서 정상으로 둡니다.
-- 확정 규칙(RF AND RNN)은 test 결과를 보고 제시한 후보입니다. RNN은 OOF 예측이 없어 CV로 검증하지 못했으므로, 운영 데이터로 재검증해야 합니다.
+| 단계 | 후보 | 선택 기준 | 이유 |
+|---|---|---|---|
+| 주의 | RNN 단독 / RF 단독 / AND / OR | F2 최대 | 놓친 피크를 줄이는 것이 우선 (Recall에 가중) |
+| 확정 | 주의에 포함되는 조합 | F0.5 최대 | 실제 조치 대상이므로 헛경보를 줄이는 것이 우선 (Precision에 가중) |
+
+- **동률 처리**: 1위와 각 후보의 지표 차이를 날짜 단위 부트스트랩(2000회)으로 구해 95% 구간이 0을 포함하면 "차이 없음"으로 보고, 그중 단순한 조합(모델 1개 > 2개)을 고릅니다. 근소한 차이로 복잡한 규칙을 고르지 않기 위해서입니다.
+- **fold별 확인**: 7월·8월 각각의 지표를 함께 저장해(`peak_alert_rule_selection.csv`) 한 달에만 좋은 조합인지 확인합니다.
+- **test 적용**: 선택된 조합을 9/1~9/14에 한 번만 적용합니다. 다른 후보의 test 성능은 참고로만 출력합니다.
+- 확정은 항상 주의에 포함됩니다. 두 단계에 같은 조합이 선택되면 두 번째 확인이 이득이 없다는 뜻이므로 1단계 경보로 운영합니다.
+- 전환 시각(13·15·16·17시) 경보에는 헛경보 확인 안내가 붙고, 두 모델 판단이 갈린 시간은 `model_disagree`로 표시합니다.
+- `rnn_oof.csv`와 `rnn_meta.json`이 다른 실행에서 나온 경우(예: 01을 중간에 멈춘 경우) 경고를 출력합니다.
+
+**이전 버전과의 차이**: 이전에는 "주의 = RNN ≥ 167, 확정 = 주의 + RF ≥ 0.55"를 test 결과를 보고 정했고(test F1 주의 0.732, 확정 0.741), RNN에 OOF가 없어 CV로 검증하지 못했습니다. 지금은 01이 RNN OOF를 저장하므로 조합을 CV로 고릅니다. **01·09를 다시 실행한 뒤 아래 수치를 채웁니다.**
+
+| 단계 (test 14일, 피크 47건) | 선택된 조합 | 경보 | 맞힌 피크 | 헛경보 | 놓친 피크 | Precision | Recall | F1 | 하루당 헛경보 |
+|---|---|---|---|---|---|---|---|---|---|
+| 주의 이상 | (재실행 후) | | | | | | | | |
+| 확정 | (재실행 후) | | | | | | | | |
 
 ### 헛경보(FP) 원인 분석 (`ablation_fp_features.py`)
 
@@ -267,13 +279,16 @@ python 09_peak_alert.py          # M2 피크 경보, 수 초 (01·02 결과와 0
 | | `encoding_ablation_summary.csv` | 달력 인코딩별 성능 비교 요약 (`ablation_encoding.py`) |
 | | `fp_feature_ablation.csv` | 헛경보 원인 변수 실험 결과 (`ablation_fp_features.py`) |
 | | `operating_calendar_summary.csv`, `operating_calendar_types.csv` | M1 평가지표(원본·증강·전체), 날 유형 × 요일 표(원본) |
-| | `peak_alert_summary.csv` | M2 경보 단계별 성능 |
+| | `peak_alert_rule_selection.csv` | M2 조합 선택표: CV OOF 후보별 지표, 1위와 차이의 부트스트랩 95% 구간, 7·8월 fold별 지표, 선택 여부 |
+| | `peak_alert_summary.csv` | M2 test 경보 단계별 성능 + 후보별 참고 성능 |
 | `4_model_details/` | `*_cv.csv`, `*_oof.csv`, `*_importance.csv` | grid 탐색 결과, CV out-of-fold 예측, 변수 중요도 |
-| | `rnn_cv.csv` | RNN 구조별 CV 결과 (CV 포함 실행 시) |
+| | `rnn_cv.csv` | RNN 구조별 CV 결과 (옵션 없이 전체 실행 시) |
+| | `rnn_oof.csv` | RNN CV OOF 예측 (`Date, fold, label, actual, forecast, predicted_label`), M2 조합 선택에 사용 |
 | | `missing_ablation_real.csv`, `missing_ablation_simulated.csv`, `encoding_ablation.csv` | 결측 처리·인코딩 비교 상세 |
 | | `operating_calendar_mismatch.csv` | M1 생산 기록 불일치일 목록 (증강일 여부·원본 날짜 포함) |
 | | `peak_alert_daily.csv` | M2 날짜별 피크·주의·확정·놓친 피크 수 |
 | `5_models/` | `random_forest.joblib`, `xgboost_classifier.json`, `catboost_classifier.cbm`, `isolation_forest.joblib`, `xgboost_reg.joblib`, `lightgbm_reg.joblib`, `rnn.keras` (+ `rnn_scalers.joblib`) | 9/1 이전 전체로 학습한 최종 모델 |
+| | `peak_alert_meta.json` | M2 선택된 조합, 선택 기준, 기준값 (M5 리포트용) |
 | | `*_meta.json` | 모델별 메타데이터: 판정 기준(threshold·cutoff), feature 목록과 순서, 파라미터, 학습·test 기간, 피크 기준 179, CV·test 성능 |
 | `6_figures/` | `rnn_forecast_plot.png` | RNN 테스트 예측 그래프 |
 | | `operating_calendar.png` | M1 가동 캘린더 |
