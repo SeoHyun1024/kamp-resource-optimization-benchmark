@@ -16,5 +16,5 @@ weekdays,92.0,84.0,176.0
 weekday_non_operating,6.0,12.0,18.0
 calendar_mismatch_days,36.0,32.0,68.0
 calendar_mismatch_rate,0.2535,0.2783,0.2646
-day_threshold,72.5,72.5,72.5
+day_threshold,60.0,60.0,60.0
 hour_threshold,41.0,41.0,41.0
