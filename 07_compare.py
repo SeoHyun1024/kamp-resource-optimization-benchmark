@@ -8,11 +8,12 @@
       (시간 단위로 뽑으면 자기상관 때문에 구간이 과소추정되므로 일 단위)
 산출: results/3_comparison/final_comparison.csv
 """
+import json
 import os
 
 import numpy as np
 import pandas as pd
-from sklearn.metrics import f1_score
+from sklearn.metrics import average_precision_score, f1_score
 
 import common as cm
 
@@ -44,10 +45,21 @@ rnn_path = cm.out("pred", "rnn_forecast.csv")
 if os.path.exists(rnn_path):
     rnn = pd.read_csv(rnn_path, index_col="Date", parse_dates=True)
     if "predicted_label" in rnn.columns and rnn.index.equals(test_df.index):
-        pos = rnn.loc[rnn["predicted_label"] == 1, "forecast"]
-        cutoff = float(pos.min()) if len(pos) else float(rnn["forecast"].max() + 1)  # 01_rnn.py가 CV로 고른 cutoff와 같은 판정
+        meta_path = cm.out("model", "rnn_meta.json")
+        if os.path.exists(meta_path):                      # 01_rnn.py가 CV OOF로 고른 cutoff
+            with open(meta_path, encoding="utf-8") as f:
+                cutoff = float(json.load(f)["peak_cutoff"])
+        else:                                              # meta가 없으면 예측 라벨에서 역산
+            pos = rnn.loc[rnn["predicted_label"] == 1, "forecast"]
+            cutoff = float(pos.min()) if len(pos) else float(rnn["forecast"].max() + 1)
+        extra = {"method": f"01_rnn.py, 예측값 >= {cutoff:.0f}"}
+        oof_path = cm.out("detail", "rnn_oof.csv")
+        if os.path.exists(oof_path):                       # RNN CV 지표 (7·8월 OOF)
+            oof = pd.read_csv(oof_path)
+            extra["cv_F1"] = f1_score(oof["label"], (oof["forecast"] >= cutoff).astype(int))
+            extra["cv_PR-AUC"] = average_precision_score(oof["label"], oof["forecast"])
         cm.save_results("rnn", test_df, rnn["forecast"].to_numpy(), cutoff, score_col="predicted_power",
-                        extra={"method": f"01_rnn.py, 예측값 >= {cutoff:.0f}"}, save_pred=False)
+                        extra=extra, save_pred=False)
         print(f"[RNN] rnn_forecast.csv 포함 (피크 판정 cutoff {cutoff:.0f})")
 else:
     print("[RNN] results/2_test_predictions/rnn_forecast.csv 없음 -> 01_rnn.py 실행 후 다시 돌리면 표에 포함됩니다")
