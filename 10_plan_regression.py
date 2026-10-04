@@ -13,15 +13,18 @@
         2) 회사 휴무 계획: 미리 공지되는 휴무(1/5 연초 휴무, 8/2~8/8 하계 휴무)는 종일 비가동.
            공휴일은 넣지 않는다(원본 공휴일 4일 모두 가동).
         3) 복제일은 원본 날짜의 계획을 물려받는다(전력 패턴이 원본 날짜를 따르므로).
+      B'는 학습 기간에도 현실 계획을 넣고, B''는 학습은 실제 가동 기록으로 하고 예측할 때만 현실 계획을 넣는다.
+      운영에서도 지난 기간은 실제 가동 기록이 있고 내일만 계획으로 알므로 B''가 실제 상황과 같다.
     - 실제 가동(B): 전력 > 시간 단위 가동 기준(M1, 41 kW)을 계획으로 간주. 예측 대상에서 만든 값이라
       "계획이 100% 지켜질 때"의 상한으로만 쓴다.
     - 생산 계획(C): 생산량 기록(전력과 독립적인 기록). 비교용.
 
 실험 (XGBoost·LightGBM 각각, 7·8월 CV MAE로 선택, test는 1회 평가)
-    A  기본            : 하루 전 feature만 (가동 정보를 뺀 같은 모델)
-    B' 기본 + 현실 계획 : M3 본 모델
-    B  기본 + 실제 가동 : 계획이 그대로 지켜질 때의 상한
-    C  기본 + 생산 계획 : 독립 기록만 쓴 경우
+    A   기본                         : 하루 전 feature만 (가동 정보를 뺀 같은 모델)
+    B'' 실제 가동으로 학습, 현실 계획으로 예측 : M3 본 모델
+    B'  현실 계획으로 학습·예측       : 학습 기간 계획이 자주 어긋날 때의 비교
+    B   실제 가동으로 학습·예측       : 계획이 그대로 지켜질 때의 상한
+    C   기본 + 생산 계획              : 독립 기록만 쓴 경우
 
     CV 지표는 early stopping 때문에 약간 낙관적이다: 각 fold에서 early stopping 기준으로 검증 구간을 그대로 쓴다.
     test는 early stopping에 쓰지 않으므로 영향이 없다(06_regression.py와 같은 방식).
@@ -60,9 +63,10 @@ MAX_ROUNDS, EARLY_STOP = 3000, 100
 COMPANY_HOLIDAYS = pd.DatetimeIndex(["2021-01-05"]).append(pd.date_range("2021-08-02", "2021-08-08"))
 PATTERN_MIN_SHARE = 0.5          # 요일·시각별 가동 비율이 이 값을 넘으면 평소 일정상 가동
 REAL_PLAN = "B'_현실계획"
-PLAN_ASSUMPTION = ("본 모델(B')의 계획 = 학습 기간 요일별 평소 일정 + 미리 공지된 회사 휴무(1/5, 8/2~8/8). "
-                   "하루 전에 알 수 있는 정보만 쓴다. B는 실제 가동(전력 > M1 시간 단위 가동 기준)을 계획으로 "
-                   "간주한 상한이다.")
+PLAN_INFER = "B''_계획예측"     # 학습은 실제 가동, 예측할 때만 현실 계획
+PLAN_ASSUMPTION = ("본 모델(B'')은 실제 가동 기록(전력 > M1 시간 단위 가동 기준)으로 학습하고, 예측할 때는 "
+                   "현실 계획(학습 기간 요일별 평소 일정 + 미리 공지된 회사 휴무 1/5, 8/2~8/8)을 넣는다. "
+                   "예측 시점에는 하루 전에 알 수 있는 정보만 쓴다. B는 예측에도 실제 가동을 넣은 상한이다.")
 
 
 # =============================================================================
@@ -202,6 +206,7 @@ RPLAN_COLS = list(RPLAN[pp.TEST_START].columns)
 FEATURE_SETS = {
     "A_기본": BASE,
     REAL_PLAN: BASE + RPLAN_COLS,
+    PLAN_INFER: BASE + PLAN,
     "B_가동계획": BASE + PLAN,
     "C_생산계획": BASE + PROD,
 }
@@ -213,6 +218,11 @@ assert data[BASE + PLAN + PROD + RPLAN_COLS].isna().sum().sum() == 0
 def with_plan(frame: pd.DataFrame, cut: pd.Timestamp) -> pd.DataFrame:
     """현실 계획 열을 cut 이전 데이터로 만든 버전으로 바꾼다."""
     return frame.assign(**RPLAN[cut].loc[frame.index])
+
+
+def predict_with_plan(frame: pd.DataFrame, cut: pd.Timestamp) -> pd.DataFrame:
+    """B'': 실제 가동 열(plan_*)을 cut 이전 데이터로 만든 현실 계획 값으로 바꾼다. 예측할 때만 쓴다."""
+    return frame.assign(**RPLAN[cut].loc[frame.index].rename(columns=lambda c: c.replace("rplan_", "plan_", 1)))
 
 
 train_df, test_df = cm.final_split(data)
@@ -295,6 +305,8 @@ def run(set_name: str, key: str) -> dict:
     set_folds = folds
     if set_name == REAL_PLAN:  # fold마다 그 fold 검증 시작 전 데이터로 만든 현실 계획을 쓴다
         set_folds = [(n, with_plan(tr, cut), with_plan(va, cut)) for (n, tr, va), cut in zip(folds, CUTS)]
+    elif set_name == PLAN_INFER:  # 과거는 실제 가동 기록으로 학습하고, 검증 구간은 계획만 안다
+        set_folds = [(n, tr, predict_with_plan(va, cut)) for (n, tr, va), cut in zip(folds, CUTS)]
     cv_rows = []
     for params in spec["grid"]:
         preds, its = [], []
@@ -316,7 +328,8 @@ def run(set_name: str, key: str) -> dict:
 
     model = spec["make"](params, n_final)
     model.fit(train_df[feats], train_df["target_power"])
-    pred_test = model.predict(test_df[feats])
+    test_x = predict_with_plan(test_df, pp.TEST_START) if set_name == PLAN_INFER else test_df
+    pred_test = model.predict(test_x[feats])
     cv_m, test_m = report(oof_frame, best["_oof"]), report(test_df, pred_test)
     print(f"[{set_name} / {key}] {params}, n={n_final} | CV MAE {cv_m['MAE']:.2f} (fold {best['fold_MAE']}) | "
           f"test MAE {test_m['MAE']:.2f}, 피크 시간 {test_m['peak_hour_MAE']:.2f}, 가동 시간 {test_m['on_hour_MAE']:.2f}, "
@@ -358,10 +371,12 @@ for name, _, va in folds:
 fold_table = pd.DataFrame(per_fold).set_index(["Model", "fold"])
 fold_table.to_csv(cm.out("cmp", "plan_regression_fold_comparison.csv"), encoding="utf-8-sig")
 
-# M3 본 모델 = 현실 계획(B') 중 CV MAE가 가장 낮은 모델. 같은 알고리즘의 A·B·C를 함께 저장해 비교한다.
+# M3 본 모델 = 예측 시점에 현실 계획만 쓰는 실험(B', B'') 중 CV MAE가 가장 낮은 모델.
+# 같은 알고리즘의 다른 실험을 함께 저장해 비교한다.
 by_name = {(r["set"], r["model"]): r for r in results}
-m3 = min((r for r in results if r["set"] == REAL_PLAN), key=lambda r: r["cv"]["MAE"])
+m3 = min((r for r in results if r["set"] in (REAL_PLAN, PLAN_INFER)), key=lambda r: r["cv"]["MAE"])
 no_plan, full_plan, prod_plan = (by_name[(s, m3["model"])] for s in ["A_기본", "B_가동계획", "C_생산계획"])
+other_real = by_name[(REAL_PLAN if m3["set"] == PLAN_INFER else PLAN_INFER, m3["model"])]
 
 # 현실 계획이 실제 가동과 얼마나 맞는지 (CV fold는 그 fold의 계획, test는 9/1 기준 계획)
 periods = [(name, va, cut) for (name, _, va), cut in zip(folds, CUTS)] + [("test", test_df, pp.TEST_START)]
@@ -386,7 +401,8 @@ def prediction_table(frame: pd.DataFrame, key: str, planned_on) -> pd.DataFrame:
     return pd.DataFrame({
         "Date": frame.index,
         "actual_power": frame["target_power"].to_numpy(),
-        "predicted_power": m3[key],                       # B' 현실 계획 (본 모델)
+        "predicted_power": m3[key],                       # 본 모델 (예측 시점에 현실 계획만 사용)
+        f"predicted_power_{other_real['set'].split('_')[0].replace(chr(39), 'p')}": other_real[key],
         "predicted_power_full_plan": full_plan[key],      # B 실제 가동 = 계획이 그대로 지켜질 때
         "predicted_power_no_plan": no_plan[key],          # A
         "predicted_power_prod_plan": prod_plan[key],      # C
@@ -428,9 +444,10 @@ for d, name in enumerate(["월", "화", "수", "목", "금", "토", "일"]):
     hours = np.flatnonzero(pattern.loc[d].to_numpy())
     print(f"  {name}: " + (f"{hours.min()}~{hours.max()}시 가동 ({len(hours)}시간)" if len(hours) else "비가동"))
 gain = no_plan["test"]["MAE"] - m3["test"]["MAE"]
-print(f"\n[M3 본 모델] {REAL_PLAN} / {m3['model']}")
+print(f"\n[M3 본 모델] {m3['set']} / {m3['model']}")
 print(f"  현실 계획 효과: MAE {no_plan['test']['MAE']:.2f} -> {m3['test']['MAE']:.2f} ({gain:+.2f} kW 개선), "
       f"CV {no_plan['cv']['MAE']:.2f} -> {m3['cv']['MAE']:.2f}")
+print(f"  {other_real['set']}: test {other_real['test']['MAE']:.2f}, CV {other_real['cv']['MAE']:.2f}")
 print(f"  계획이 그대로 지켜질 때(B): test {full_plan['test']['MAE']:.2f}, CV {full_plan['cv']['MAE']:.2f}")
 print(f"  생산 계획만 쓴 경우: MAE {prod_plan['test']['MAE']:.2f}")
 print(f"  가이드북 비교용 MSE: {m3['test']['MSE']:.2f} (= RMSE², 예측 대상 정의가 같은지 확인 후 사용)")
