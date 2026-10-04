@@ -6,16 +6,25 @@
       전력·외생변수는 T보다 24시간 이상 앞선 값만 쓴다(lag_1~lag_12, 15분 값, 당일 rolling 제외).
     - 가동 계획: M1(08_operating_calendar.py)의 날 유형과 T 시각 가동 여부를 입력에 넣는다.
 
-계획 정보 가정 (보고서에 반드시 명시)
-    T 시각의 가동 여부·생산량은 "전날 확정된 계획"이라고 가정하고 실제 값에서 가져온다.
-    - 가동 계획: 전력 > 시간 단위 가동 기준(M1, 41 kW). 예측 대상에서 만든 값이라
-      전체 MAE는 켜짐/꺼짐을 알려준 효과가 대부분이다 -> 가동 시간 MAE를 함께 본다.
-    - 생산 계획: 생산량 기록(전력과 독립적인 기록). 비교용.
+계획 정보 (보고서에 반드시 명시)
+    - 현실 계획(B'): 하루 전에 실제로 알 수 있는 정보로만 만든다.
+        1) 요일별 평소 일정: 학습 기간(검증 시작 전) 원본 일자에서 요일·시각별 가동 비율 > 0.5 이면 가동.
+           복제일과 회사 휴무일은 패턴을 뽑을 때 뺀다. CV fold마다 그 fold 검증 시작 전 데이터로만 뽑는다.
+        2) 회사 휴무 계획: 미리 공지되는 휴무(1/5 연초 휴무, 8/2~8/8 하계 휴무)는 종일 비가동.
+           공휴일은 넣지 않는다(원본 공휴일 4일 모두 가동).
+        3) 복제일은 원본 날짜의 계획을 물려받는다(전력 패턴이 원본 날짜를 따르므로).
+    - 실제 가동(B): 전력 > 시간 단위 가동 기준(M1, 41 kW)을 계획으로 간주. 예측 대상에서 만든 값이라
+      "계획이 100% 지켜질 때"의 상한으로만 쓴다.
+    - 생산 계획(C): 생산량 기록(전력과 독립적인 기록). 비교용.
 
 실험 (XGBoost·LightGBM 각각, 7·8월 CV MAE로 선택, test는 1회 평가)
-    A 기본            : 하루 전 feature만 (가동 정보를 뺀 같은 모델)
-    B 기본 + 가동 계획 : M3 본 모델
-    C 기본 + 생산 계획 : 독립 기록만 쓴 경우
+    A  기본            : 하루 전 feature만 (가동 정보를 뺀 같은 모델)
+    B' 기본 + 현실 계획 : M3 본 모델
+    B  기본 + 실제 가동 : 계획이 그대로 지켜질 때의 상한
+    C  기본 + 생산 계획 : 독립 기록만 쓴 경우
+
+    CV 지표는 early stopping 때문에 약간 낙관적이다: 각 fold에서 early stopping 기준으로 검증 구간을 그대로 쓴다.
+    test는 early stopping에 쓰지 않으므로 영향이 없다(06_regression.py와 같은 방식).
 
 실행:  python preprocessing.py -> python 08_operating_calendar.py -> python 06_regression.py -> python 10_plan_regression.py
 산출:  results/3_comparison/plan_regression_comparison.csv
@@ -23,8 +32,11 @@
        results/2_test_predictions/plan_regression_predictions.csv, plan_regression_daily_max.csv  (M4·M5 입력)
        results/4_model_details/plan_regression_<실험>_<모델>_cv.csv
        results/4_model_details/plan_regression_oof.csv  (7·8월 CV 검증 구간 시간별 예측)
+       results/4_model_details/plan_regression_weekday_pattern.csv  (현실 계획의 요일·시각별 가동 비율)
+       results/3_comparison/plan_regression_plan_accuracy.csv  (현실 계획과 실제 가동의 일치율)
        results/5_models/plan_regression.joblib + _meta.json
 """
+import json
 import os
 import warnings
 
@@ -43,8 +55,14 @@ HORIZON = 24                     # 하루 전: T - 24시간 이전 값만 사용
 DAY_LAGS = [24, 48, 167, 168, 169, 336]
 DAY_TYPES = ["비가동", "종일 가동", "가동 시작일", "가동 종료일", "중간 정지", "부분 가동"]
 MAX_ROUNDS, EARLY_STOP = 3000, 100
-PLAN_ASSUMPTION = ("T 시각 가동 여부(전력 > M1 시간 단위 가동 기준)와 날 유형을 전날 확정된 계획으로 간주. "
-                   "실제 값에서 만든 정보이므로 운영에서는 계획표로 대체해야 한다.")
+# 미리 공지되는 회사 휴무: 원본 평일 비가동은 1/5(신정 연휴 다음 날)와 하계 휴무뿐이다.
+# 하계 휴무는 주말까지 한 주(8/2~8/8)로 둔다. 실제로 8/7(토)도 비가동이었다.
+COMPANY_HOLIDAYS = pd.DatetimeIndex(["2021-01-05"]).append(pd.date_range("2021-08-02", "2021-08-08"))
+PATTERN_MIN_SHARE = 0.5          # 요일·시각별 가동 비율이 이 값을 넘으면 평소 일정상 가동
+REAL_PLAN = "B'_현실계획"
+PLAN_ASSUMPTION = ("본 모델(B')의 계획 = 학습 기간 요일별 평소 일정 + 미리 공지된 회사 휴무(1/5, 8/2~8/8). "
+                   "하루 전에 알 수 있는 정보만 쓴다. B는 실제 가동(전력 > M1 시간 단위 가동 기준)을 계획으로 "
+                   "간주한 상한이다.")
 
 
 # =============================================================================
@@ -90,27 +108,53 @@ def base_features(df: pd.DataFrame, cal: pd.DataFrame) -> pd.DataFrame:
     )
 
 
-def plan_features(df: pd.DataFrame, cal: pd.DataFrame, hour_thr: float) -> pd.DataFrame:
-    """가동 계획: T 시각 가동 여부(전력 기준)와 M1 날 유형. 하루 안의 계획만 본다."""
-    idx = df.index
+def plan_features(on: pd.Series, prefix: str) -> pd.DataFrame:
+    """시간별 계획 가동 여부(0/1)로 계획 feature 9개를 만든다. 날 유형은 M1(08)과 같은 규칙으로 판정한다."""
+    idx = on.index
     date = idx.normalize()
-    on = (df["power"] > hour_thr).astype(int)
+    hour = pd.Series(idx.hour, index=idx)
     by_day = on.groupby(date)
     run = (on == 0).groupby(date).cumsum()                     # 같은 날 안에서 꺼질 때마다 새 구간
     rev = on[::-1]
     rev_run = (rev == 0).groupby(rev.index.normalize()).cumsum()
-    day = cal.reindex(date)
+    on_hours = by_day.transform("sum")
+    start = (by_day.transform("first") == 0) & (on_hours > 0)  # 0시 꺼짐 -> 이후 켜짐
+    end = (by_day.transform("last") == 0) & (on_hours > 0)     # 23시 꺼짐
+    day_type = np.select([on_hours == 0, start & end, start, end, on_hours < 24],
+                         ["비가동", "부분 가동", "가동 시작일", "가동 종료일", "중간 정지"], default="종일 가동")
     return pd.DataFrame({
-        "plan_on": on,
-        "plan_on_prev": on.shift(1).fillna(on).astype(int),      # 전날 계획도 이미 확정된 값
-        "plan_on_next": by_day.shift(-1).fillna(on).astype(int),
-        "plan_hours_since_on": on.groupby([date, run]).cumsum(),
-        "plan_hours_until_off": rev.groupby([rev.index.normalize(), rev_run]).cumsum()[::-1],
-        "plan_on_hours": day["on_hours"].to_numpy(),
-        "plan_first_on_hour": day["first_on_hour"].fillna(-1).to_numpy(),
-        "plan_last_on_hour": day["last_on_hour"].fillna(-1).to_numpy(),
-        "plan_day_type": day["day_type"].map({t: i for i, t in enumerate(DAY_TYPES)}).to_numpy(),
-    }, index=idx)
+        "on": on,
+        "on_prev": on.shift(1).fillna(on).astype(int),          # 전날 계획도 이미 확정된 값
+        "on_next": by_day.shift(-1).fillna(on).astype(int),
+        "hours_since_on": on.groupby([date, run]).cumsum(),
+        "hours_until_off": rev.groupby([rev.index.normalize(), rev_run]).cumsum()[::-1],
+        "on_hours": on_hours,
+        "first_on_hour": hour.where(on == 1).groupby(date).transform("min").fillna(-1),
+        "last_on_hour": hour.where(on == 1).groupby(date).transform("max").fillna(-1),
+        "day_type": pd.Series(day_type, index=idx).map({t: i for i, t in enumerate(DAY_TYPES)}),
+    }, index=idx).add_prefix(prefix)
+
+
+def load_copied() -> dict:
+    """복제일 -> 원본 날짜 (preprocessing.py가 저장)."""
+    with open(pp.out("prep", "copied_days.json"), encoding="utf-8") as f:
+        return {pd.Timestamp(k): pd.Timestamp(v) for k, v in json.load(f).items()}
+
+
+def weekday_pattern(on: pd.Series, copied: dict, cut: pd.Timestamp) -> pd.DataFrame:
+    """요일·시각별 가동 비율 (cut 이전 원본 일자, 회사 휴무일 제외). index = 요일(0=월), columns = 시각."""
+    date = on.index.normalize()
+    use = (on.index < cut) & ~date.isin(list(copied)) & ~date.isin(COMPANY_HOLIDAYS)
+    part = on[use]
+    return part.groupby([part.index.dayofweek, part.index.hour]).mean().unstack()
+
+
+def realistic_plan(index: pd.DatetimeIndex, share: pd.DataFrame, copied: dict) -> pd.Series:
+    """하루 전에 알 수 있는 계획: 요일별 평소 일정 + 회사 휴무. 복제일은 원본 날짜의 계획을 쓴다."""
+    plan_date = pd.DatetimeIndex([copied.get(d, d) for d in index.normalize()])
+    on = (share.to_numpy()[plan_date.dayofweek, index.hour] > PATTERN_MIN_SHARE).astype(int)
+    on[plan_date.isin(COMPANY_HOLIDAYS)] = 0
+    return pd.Series(on, index=index)
 
 
 def production_features(df: pd.DataFrame) -> pd.DataFrame:
@@ -140,23 +184,41 @@ def leakage_check(df: pd.DataFrame, cal: pd.DataFrame, base: pd.DataFrame) -> No
 df = pp.clean(pp.load_raw(), log=lambda *_: None)
 ds, _, peak_thr = pp.load_dataset(log=lambda *_: None)  # 06과 같은 행·label·target로 평가
 cal, hour_thr = load_calendar()
+copied = load_copied()
+actual_on = (df["power"] > hour_thr).astype(int)
 
-base, plan, prod = base_features(df, cal), plan_features(df, cal, hour_thr), production_features(df)
+base, plan, prod = base_features(df, cal), plan_features(actual_on, "plan_"), production_features(df)
 leakage_check(df, cal, base)
+
+# 현실 계획은 검증 시작 시점(cut)마다 그 이전 데이터로만 만든다: CV fold 2개 + 최종(9/1)
+CUTS = [start for start, _ in pp.CV_FOLDS] + [pp.TEST_START]
+SHARES = {cut: weekday_pattern(actual_on, copied, cut) for cut in CUTS}
+RPLAN = {cut: plan_features(realistic_plan(df.index, SHARES[cut], copied), "rplan_") for cut in CUTS}
+changed_on = actual_on.where(actual_on.index < CUTS[0], 1 - actual_on)  # cut 이후 가동 여부를 뒤집어도
+assert weekday_pattern(changed_on, copied, CUTS[0]).equals(SHARES[CUTS[0]])  # 패턴은 그대로여야 한다
+
 BASE, PLAN, PROD = list(base.columns), list(plan.columns), list(prod.columns)
+RPLAN_COLS = list(RPLAN[pp.TEST_START].columns)
 FEATURE_SETS = {
     "A_기본": BASE,
+    REAL_PLAN: BASE + RPLAN_COLS,
     "B_가동계획": BASE + PLAN,
     "C_생산계획": BASE + PROD,
 }
-data = pd.concat([base, plan, prod], axis=1).loc[ds.index].assign(
+data = pd.concat([base, plan, prod, RPLAN[pp.TEST_START]], axis=1).loc[ds.index].assign(
     target_power=ds["target_power"], label=ds["label"], is_copied_day=ds["is_copied_day"])
-assert data[BASE + PLAN + PROD].isna().sum().sum() == 0
+assert data[BASE + PLAN + PROD + RPLAN_COLS].isna().sum().sum() == 0
+
+
+def with_plan(frame: pd.DataFrame, cut: pd.Timestamp) -> pd.DataFrame:
+    """현실 계획 열을 cut 이전 데이터로 만든 버전으로 바꾼다."""
+    return frame.assign(**RPLAN[cut].loc[frame.index])
+
 
 train_df, test_df = cm.final_split(data)
 folds = cm.cv_folds(data)
 fold_rows = np.mean([len(tr) for _, tr, _ in folds])
-print(f"[정보] 하루 전 feature {len(BASE)}개 + 가동 계획 {len(PLAN)}개 / 생산 계획 {len(PROD)}개, "
+print(f"[정보] 하루 전 feature {len(BASE)}개 + 계획 {len(PLAN)}개 / 생산 계획 {len(PROD)}개, "
       f"시간 단위 가동 기준 > {hour_thr:.0f} kW")
 print(f"[정보] train {len(train_df)}행 / test {len(test_df)}행 (피크 {int(test_df['label'].sum())}건, "
       f"가동 시간 {int(test_df['plan_on'].sum())}시간)")
@@ -230,10 +292,13 @@ def fit_fold(key, params, feats, tr, va):
 def run(set_name: str, key: str) -> dict:
     """한 feature 묶음·모델을 CV로 튜닝하고 9/1 이전 전체로 재학습해 test를 예측한다."""
     spec, feats = MODELS[key], FEATURE_SETS[set_name]
+    set_folds = folds
+    if set_name == REAL_PLAN:  # fold마다 그 fold 검증 시작 전 데이터로 만든 현실 계획을 쓴다
+        set_folds = [(n, with_plan(tr, cut), with_plan(va, cut)) for (n, tr, va), cut in zip(folds, CUTS)]
     cv_rows = []
     for params in spec["grid"]:
         preds, its = [], []
-        for _, tr, va in folds:
+        for _, tr, va in set_folds:
             pred, it = fit_fold(key, params, feats, tr, va)
             preds.append(pred); its.append(it)
         fold_mae = [mean_absolute_error(va["target_power"], pr) for (_, _, va), pr in zip(folds, preds)]
@@ -241,7 +306,8 @@ def run(set_name: str, key: str) -> dict:
                         "fold_MAE": " / ".join(f"{v:.2f}" for v in fold_mae),
                         "best_iter": int(np.mean(its)), "_oof": np.concatenate(preds)})
     cv = pd.DataFrame(cv_rows).sort_values("cv_MAE")
-    cv.drop(columns="_oof").to_csv(cm.out("detail", f"plan_regression_{set_name}_{key}_cv.csv"), index=False)
+    cv.drop(columns="_oof").to_csv(cm.out("detail", f"plan_regression_{set_name.replace(chr(39), 'p')}_{key}_cv.csv"),
+                                   index=False)
     best = cv.iloc[0]
     params = {k: best[k] for k in spec["grid"][0]}
     params = {k: (int(v) if isinstance(v, np.integer) else float(v) if isinstance(v, np.floating) else v)
@@ -292,30 +358,50 @@ for name, _, va in folds:
 fold_table = pd.DataFrame(per_fold).set_index(["Model", "fold"])
 fold_table.to_csv(cm.out("cmp", "plan_regression_fold_comparison.csv"), encoding="utf-8-sig")
 
-# M3 본 모델 = 가동 계획(B) 중 CV MAE가 가장 낮은 모델. 같은 알고리즘의 A·C를 함께 저장해 가동 정보 효과를 본다.
+# M3 본 모델 = 현실 계획(B') 중 CV MAE가 가장 낮은 모델. 같은 알고리즘의 A·B·C를 함께 저장해 비교한다.
 by_name = {(r["set"], r["model"]): r for r in results}
-m3 = min((r for r in results if r["set"] == "B_가동계획"), key=lambda r: r["cv"]["MAE"])
-no_plan, prod_plan = by_name[("A_기본", m3["model"])], by_name[("C_생산계획", m3["model"])]
+m3 = min((r for r in results if r["set"] == REAL_PLAN), key=lambda r: r["cv"]["MAE"])
+no_plan, full_plan, prod_plan = (by_name[(s, m3["model"])] for s in ["A_기본", "B_가동계획", "C_생산계획"])
+
+# 현실 계획이 실제 가동과 얼마나 맞는지 (CV fold는 그 fold의 계획, test는 9/1 기준 계획)
+periods = [(name, va, cut) for (name, _, va), cut in zip(folds, CUTS)] + [("test", test_df, pp.TEST_START)]
+oof_rplan_on = pd.concat([RPLAN[cut].loc[va.index, "rplan_on"] for _, va, cut in periods[:-1]])
+acc_rows = []
+for name, frame, cut in periods:
+    planned, actual = RPLAN[cut].loc[frame.index, "rplan_on"], frame["plan_on"]
+    miss = planned != actual
+    miss_days = sorted({d.strftime("%m/%d") for d in frame.index[miss.to_numpy()].normalize()})
+    acc_rows.append({"period": name, "hours": len(frame), "agreement": float((~miss).mean()),
+                     "planned_on_actual_off": int(((planned == 1) & (actual == 0)).sum()),
+                     "planned_off_actual_on": int(((planned == 0) & (actual == 1)).sum()),
+                     "mismatch_days": len(miss_days), "mismatch_dates": " ".join(miss_days)})
+plan_acc = pd.DataFrame(acc_rows).set_index("period")
+plan_acc.to_csv(cm.out("cmp", "plan_regression_plan_accuracy.csv"), encoding="utf-8-sig")
+SHARES[pp.TEST_START].rename(index=dict(enumerate(["월", "화", "수", "목", "금", "토", "일"]))).rename_axis("dow").to_csv(
+    cm.out("detail", "plan_regression_weekday_pattern.csv"), encoding="utf-8-sig")
 
 
-
-def prediction_table(frame: pd.DataFrame, key: str) -> pd.DataFrame:
+def prediction_table(frame: pd.DataFrame, key: str, planned_on) -> pd.DataFrame:
     """시간별 실제·예측 전력. key = "pred_test"(test) 또는 "pred_oof"(7·8월 CV 검증 구간)."""
     return pd.DataFrame({
         "Date": frame.index,
         "actual_power": frame["target_power"].to_numpy(),
-        "predicted_power": m3[key],
-        "predicted_power_no_plan": no_plan[key],
-        "predicted_power_prod_plan": prod_plan[key],
-        "plan_on": frame["plan_on"].to_numpy(),
+        "predicted_power": m3[key],                       # B' 현실 계획 (본 모델)
+        "predicted_power_full_plan": full_plan[key],      # B 실제 가동 = 계획이 그대로 지켜질 때
+        "predicted_power_no_plan": no_plan[key],          # A
+        "predicted_power_prod_plan": prod_plan[key],      # C
+        "planned_on": np.asarray(planned_on),             # 현실 계획상 가동 여부
+        "plan_on": frame["plan_on"].to_numpy(),           # 실제 가동 여부
         "day_type": cal["day_type"].reindex(frame.index.normalize()).to_numpy(),
         "actual_label": frame["label"].to_numpy(),
     })
 
 
-prediction_table(test_df, "pred_test").to_csv(cm.out("pred", "plan_regression_predictions.csv"), index=False, encoding="utf-8-sig")
+prediction_table(test_df, "pred_test", test_df["rplan_on"]).to_csv(
+    cm.out("pred", "plan_regression_predictions.csv"), index=False, encoding="utf-8-sig")
 # 7·8월 CV out-of-fold 예측 (복제일 없는 구간). M4에서 test를 보지 않고 조정 규칙을 고를 때 쓴다.
-prediction_table(oof_frame, "pred_oof").to_csv(cm.out("detail", "plan_regression_oof.csv"), index=False, encoding="utf-8-sig")
+prediction_table(oof_frame, "pred_oof", oof_rplan_on).to_csv(
+    cm.out("detail", "plan_regression_oof.csv"), index=False, encoding="utf-8-sig")
 dm = daily_max(test_df, m3["pred_test"])
 dm.assign(error=dm["pred_max"] - dm["actual_max"]).to_csv(cm.out("pred", "plan_regression_daily_max.csv"), encoding="utf-8-sig")
 
@@ -323,6 +409,8 @@ cm.save_model("plan_regression", m3["fitted"], {
     "script": "10_plan_regression.py", "task": "하루 전 시간별 전력 회귀 (가동 계획 연계)",
     "target": "target_power (연속값)", "forecast_horizon": f"T-{HORIZON}시간 이전 값만 사용",
     "plan_assumption": PLAN_ASSUMPTION, "hour_on_threshold": hour_thr, "day_types": DAY_TYPES,
+    "company_holidays": [d.strftime("%Y-%m-%d") for d in COMPANY_HOLIDAYS], "pattern_min_share": PATTERN_MIN_SHARE,
+    "weekday_pattern_file": "4_model_details/plan_regression_weekday_pattern.csv (9/1 이전 데이터로 만든 계획)",
     "algorithm": m3["model"], "features": m3["features"], "params": m3["params"],
     "cv": {k: round(float(v), 4) for k, v in m3["cv"].items()},
     "test": {k: round(float(v), 4) for k, v in m3["test"].items()},
@@ -333,10 +421,17 @@ print("\n=== fold별 CV 성능 (7월 / 8월) ===")
 print(fold_table[["hours", "MAE", "RMSE", "peak_hour_MAE", "on_hour_MAE", "daily_max_MAE"]].round(2).unstack("fold").to_string())
 print("\n=== Test 회귀 성능 (하루 전 vs 1시간 전) ===")
 print(table[cols].round(2).to_string())
-gain, gain_on = no_plan["test"]["MAE"] - m3["test"]["MAE"], no_plan["test"]["on_hour_MAE"] - m3["test"]["on_hour_MAE"]
-print(f"\n[M3 본 모델] B_가동계획 / {m3['model']}")
-print(f"  가동 정보 효과: MAE {no_plan['test']['MAE']:.2f} -> {m3['test']['MAE']:.2f} ({gain:+.2f} kW 개선), "
-      f"가동 시간 MAE {no_plan['test']['on_hour_MAE']:.2f} -> {m3['test']['on_hour_MAE']:.2f} ({gain_on:+.2f})")
+print("\n=== 현실 계획과 실제 가동의 일치 ===")
+print(plan_acc.round(4).to_string())
+pattern = SHARES[pp.TEST_START] > PATTERN_MIN_SHARE
+for d, name in enumerate(["월", "화", "수", "목", "금", "토", "일"]):
+    hours = np.flatnonzero(pattern.loc[d].to_numpy())
+    print(f"  {name}: " + (f"{hours.min()}~{hours.max()}시 가동 ({len(hours)}시간)" if len(hours) else "비가동"))
+gain = no_plan["test"]["MAE"] - m3["test"]["MAE"]
+print(f"\n[M3 본 모델] {REAL_PLAN} / {m3['model']}")
+print(f"  현실 계획 효과: MAE {no_plan['test']['MAE']:.2f} -> {m3['test']['MAE']:.2f} ({gain:+.2f} kW 개선), "
+      f"CV {no_plan['cv']['MAE']:.2f} -> {m3['cv']['MAE']:.2f}")
+print(f"  계획이 그대로 지켜질 때(B): test {full_plan['test']['MAE']:.2f}, CV {full_plan['cv']['MAE']:.2f}")
 print(f"  생산 계획만 쓴 경우: MAE {prod_plan['test']['MAE']:.2f}")
 print(f"  가이드북 비교용 MSE: {m3['test']['MSE']:.2f} (= RMSE², 예측 대상 정의가 같은지 확인 후 사용)")
 print(f"[가정] {PLAN_ASSUMPTION}")

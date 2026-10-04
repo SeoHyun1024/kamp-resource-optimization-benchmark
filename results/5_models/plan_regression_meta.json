@@ -17,7 +17,7 @@
   "task": "하루 전 시간별 전력 회귀 (가동 계획 연계)",
   "target": "target_power (연속값)",
   "forecast_horizon": "T-24시간 이전 값만 사용",
-  "plan_assumption": "T 시각 가동 여부(전력 > M1 시간 단위 가동 기준)와 날 유형을 전날 확정된 계획으로 간주. 실제 값에서 만든 정보이므로 운영에서는 계획표로 대체해야 한다.",
+  "plan_assumption": "본 모델(B')의 계획 = 학습 기간 요일별 평소 일정 + 미리 공지된 회사 휴무(1/5, 8/2~8/8). 하루 전에 알 수 있는 정보만 쓴다. B는 실제 가동(전력 > M1 시간 단위 가동 기준)을 계획으로 간주한 상한이다.",
   "hour_on_threshold": 41.0,
   "day_types": [
     "비가동",
@@ -27,6 +27,18 @@
     "중간 정지",
     "부분 가동"
   ],
+  "company_holidays": [
+    "2021-01-05",
+    "2021-08-02",
+    "2021-08-03",
+    "2021-08-04",
+    "2021-08-05",
+    "2021-08-06",
+    "2021-08-07",
+    "2021-08-08"
+  ],
+  "pattern_min_share": 0.5,
+  "weekday_pattern_file": "4_model_details/plan_regression_weekday_pattern.csv (9/1 이전 데이터로 만든 계획)",
   "algorithm": "lightgbm",
   "features": [
     "lag_24",
@@ -51,45 +63,45 @@
     "labor_cost_lag24",
     "hour",
     "day_of_week",
-    "plan_on",
-    "plan_on_prev",
-    "plan_on_next",
-    "plan_hours_since_on",
-    "plan_hours_until_off",
-    "plan_on_hours",
-    "plan_first_on_hour",
-    "plan_last_on_hour",
-    "plan_day_type"
+    "rplan_on",
+    "rplan_on_prev",
+    "rplan_on_next",
+    "rplan_hours_since_on",
+    "rplan_hours_until_off",
+    "rplan_on_hours",
+    "rplan_first_on_hour",
+    "rplan_last_on_hour",
+    "rplan_day_type"
   ],
   "params": {
     "num_leaves": 31,
-    "learning_rate": 0.1,
-    "min_child_samples": 10,
+    "learning_rate": 0.03,
+    "min_child_samples": 30,
     "objective": "regression_l1",
-    "n_estimators": 78
+    "n_estimators": 258
   },
   "cv": {
-    "MAE": 7.942,
-    "RMSE": 12.8203,
-    "MSE": 164.3595,
-    "peak_hour_MAE": 15.908,
-    "on_hour_MAE": 10.9305,
-    "off_hour_MAE": 2.9757,
-    "switch_hour_MAE": 12.3399,
+    "MAE": 20.4041,
+    "RMSE": 37.8615,
+    "MSE": 1433.493,
+    "peak_hour_MAE": 23.1862,
+    "on_hour_MAE": 14.3734,
+    "off_hour_MAE": 30.4261,
+    "switch_hour_MAE": 14.3349,
     "switch_hours": 18.0,
-    "daily_max_MAE": 11.2458,
-    "daily_max_bias": -9.5506
+    "daily_max_MAE": 31.2499,
+    "daily_max_bias": -1.2767
   },
   "test": {
-    "MAE": 6.5582,
-    "RMSE": 9.4476,
-    "MSE": 89.258,
-    "peak_hour_MAE": 12.2355,
-    "on_hour_MAE": 8.1353,
-    "off_hour_MAE": 2.4372,
-    "switch_hour_MAE": 16.3183,
+    "MAE": 7.1447,
+    "RMSE": 10.0502,
+    "MSE": 101.0061,
+    "peak_hour_MAE": 10.5576,
+    "on_hour_MAE": 8.2995,
+    "off_hour_MAE": 4.1274,
+    "switch_hour_MAE": 12.817,
     "switch_hours": 6.0,
-    "daily_max_MAE": 9.2674,
-    "daily_max_bias": -8.5475
+    "daily_max_MAE": 7.462,
+    "daily_max_bias": -6.5905
   }
 }
