@@ -1,0 +1,137 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>KAMP 자원 최적화 에이전트</title>
+<meta name="description" content="피크 전력 예측 결과로 일정 조정안을 만들어 관리자·근로자에게 보여 주는 에이전트 (2021-09 데이터 시뮬레이션)">
+<link rel="icon" href="data:,">
+<link rel="stylesheet" href="styles.css">
+</head>
+<body>
+<a class="skip" href="#main">본문으로 건너뛰기</a>
+
+<header class="top">
+  <div class="top-inner">
+    <div class="brand">
+      <span class="brand-mark" aria-hidden="true">⚡</span>
+      <div>
+        <h1>자원 최적화 에이전트</h1>
+        <p class="sub">피크 전력 예측 → 일정 조정안 · KAMP 데이터 2021-09 시뮬레이션</p>
+      </div>
+    </div>
+    <nav class="tabs" role="tablist" aria-label="화면 선택">
+      <button role="tab" id="tab-admin" data-view="admin" aria-selected="true" aria-controls="view-admin">관리자</button>
+      <button role="tab" id="tab-worker" data-view="worker" aria-selected="false" aria-controls="view-worker">근로자</button>
+      <button role="tab" id="tab-chat" data-view="chat" aria-selected="false" aria-controls="view-chat">에이전트 챗봇</button>
+    </nav>
+    <button class="icon-btn" id="theme" type="button" aria-label="화면 밝기 바꾸기" title="화면 밝기 바꾸기">◐</button>
+  </div>
+</header>
+
+<main id="main">
+  <div class="notice" role="note">
+    <p>실제 운영 결과가 아닌 <strong>2021-09 데이터 시뮬레이션</strong>입니다.</p>
+    <details class="acc">
+      <summary>자세히 보기</summary>
+      <div class="acc-body">2021-09-01~09-14 데이터를 되돌려 본 결과입니다. 이동 가능 비율과 기본요금 단가는 데이터에 없는 값이라 직접 정하는 입력값이고, 기본요금 단가는 예시값입니다.</div>
+    </details>
+  </div>
+
+  <section class="settings" aria-label="조정 조건">
+    <label>이동 가능 비율
+      <select id="s-share"></select>
+    </label>
+    <label>안전 마진
+      <select id="s-margin"></select>
+    </label>
+    <label class="price">기본요금 단가 <span class="tag">예시값</span>
+      <span class="input-unit"><input id="s-price" type="number" min="0" step="100" inputmode="numeric"> 원/kW·월</span>
+    </label>
+  </section>
+
+  <!-- 관리자 -->
+  <section id="view-admin" class="view" role="tabpanel" aria-labelledby="tab-admin">
+    <div class="kpis" id="kpis"></div>
+    <div class="callout" id="callout"></div>
+
+    <div class="card">
+      <div class="card-head">
+        <h2>날짜별 변경 전 → 변경 후</h2>
+        <label class="inline">날짜 <select id="a-date"></select></label>
+      </div>
+      <p class="muted" id="a-day-summary"></p>
+      <div class="legend" id="a-legend"></div>
+      <div class="chart-wrap" id="a-chart"></div>
+      <div class="chart-actions">
+        <button type="button" class="link" id="a-replay">▶ 변경 적용 다시 보기</button>
+        <button type="button" class="link" id="a-table-toggle" aria-expanded="false">표로 보기</button>
+      </div>
+      <div id="a-table" hidden></div>
+    </div>
+
+    <div class="card">
+      <div class="card-head">
+        <h2>왜 이렇게 바꾸나요?</h2>
+        <button type="button" class="link" id="a-expand" aria-pressed="false">모두 펼치기</button>
+      </div>
+      <div id="a-changes"></div>
+    </div>
+
+    <div class="card">
+      <h2>전체 기간 요약</h2>
+      <div class="table-scroll" id="a-days"></div>
+    </div>
+
+    <div class="card method">
+      <h2>계산 방법과 가정</h2>
+      <div id="a-method"></div>
+    </div>
+  </section>
+
+  <!-- 근로자 -->
+  <section id="view-worker" class="view" role="tabpanel" aria-labelledby="tab-worker" hidden>
+    <div class="card">
+      <div class="card-head">
+        <h2>이번 주 추천 일정표</h2>
+        <div class="week-nav">
+          <button type="button" id="w-prev" aria-label="이전 주">‹</button>
+          <span id="w-range"></span>
+          <button type="button" id="w-next" aria-label="다음 주">›</button>
+        </div>
+      </div>
+      <p class="muted">블록을 눌러 옮길 시간을 확인하세요.</p>
+      <details class="acc">
+        <summary>이 표 보는 방법</summary>
+        <div class="acc-body">주황색 블록은 전력이 몰리는 시간이라 큰 설비 가동을 피하는 시간입니다. 파란색 블록은 전력 여유가 있어 미룬 작업을 배치하는 시간입니다. 블록을 누르면 이유와 옮길 시간이 아래에 나옵니다.</div>
+      </details>
+      <div class="tt-legend" id="w-legend"></div>
+      <div class="tt-scroll"><div class="tt" id="tt"></div></div>
+    </div>
+    <div class="card" id="w-detail" aria-live="polite"></div>
+  </section>
+
+  <!-- 챗봇 -->
+  <section id="view-chat" class="view" role="tabpanel" aria-labelledby="tab-chat" hidden>
+    <div class="card chat">
+      <div class="chat-log" id="chat-log" role="log" aria-live="polite"></div>
+      <div class="chips" id="chips"></div>
+      <form class="chat-form" id="chat-form" autocomplete="off">
+        <label class="sr" for="chat-input">에이전트에게 질문</label>
+        <input id="chat-input" type="text" placeholder="예) 9/2 일정 추천해줘" maxlength="120">
+        <button type="submit">보내기</button>
+      </form>
+      <p class="muted small">서버나 AI 모델 없이, 브라우저에 담긴 계산 결과로 답하는 규칙 기반 챗봇입니다. 아는 질문만 답해요.</p>
+    </div>
+  </section>
+</main>
+
+<footer class="foot">
+  <p>데이터: 중소벤처기업부·KAIST KAMP 자원 최적화 AI 데이터셋 · 모델: M1 가동 캘린더 · M2 피크 경보 · M3 하루 전 예측 · M4 일정 조정 · M5 리포트</p>
+</footer>
+
+<div id="live" class="sr" aria-live="polite"></div>
+<script src="data/agent_data.js"></script>
+<script src="app.js"></script>
+</body>
+</html>
