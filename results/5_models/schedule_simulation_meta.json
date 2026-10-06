@@ -1,0 +1,34 @@
+{
+  "script": "11_schedule_simulation.py",
+  "peak_threshold": 179.0,
+  "x_grid": [
+    0.05,
+    0.1,
+    0.2
+  ],
+  "receive_cap": 178.0,
+  "rules": {
+    "주의": "RF 단독",
+    "확정": "AND"
+  },
+  "rnn_cutoff": 169.0,
+  "rf_threshold": 0.55,
+  "m3_cutoff": 168,
+  "m3_cutoff_selection": "7·8월 OOF F1 최대 (7·8월의 M3 결과는 낙관적)",
+  "shift_rule": "경보 시간 부하의 x%를 같은 날 현실 계획상 가동 시간 중 예상 부하가 낮은 순으로 이동. 예상 부하 = max(M3 예측, 2주 내 같은 시각 최대). 한 시간이 받는 양은 피크 기준 - 1까지의 여유와 예상 부하의 x% 중 작은 값. 1시간 전 대상은 이후 시간만, 하루 전 대상은 경보 없는 시간 앞뒤 모두. 못 옮긴 양은 깎지 않음. 완벽 예측은 받는 시간의 부하도 실제 전력으로 앎",
+  "rule_revision": "처음 규칙(예상 부하 = M3 예측, 시간당 한도 없음)은 7·8월 OOF에서 최대수요를 키워 수정함. test 미사용",
+  "base_rate_won_per_kw": 8320,
+  "base_rate_range": [
+    6490,
+    9810
+  ],
+  "tariff_confirmed": false,
+  "tariff_source": "한국전력공사 전기요금표(산업용) https://cyber.kepco.co.kr/ckepco/front/jsp/CY/E/E/CYEEHP00103.jsp : 산업용전력(을) 고압A 선택Ⅱ 기본요금 8,320원/kW. 요금제는 추정: 데이터의 전기요금 109.8/167.2/191.6이 이 요금제 최대부하 단가(2013.11.21 시행 109.3/166.7/191.1)보다 각각 0.5 높은 같은 묶음",
+  "billing_source": "한국전력공사 기본공급약관 제68조(요금적용전력의 결정) https://cyber.kepco.co.kr/ckepco/front/jsp/CY/D/C/CYDCHP00108.jsp",
+  "billing_rule": "요금적용전력 = 당월과 직전 12개월 중 [12, 1, 2, 7, 8, 9]월분 최대수요 중 최댓값 (데이터는 2021-01부터)",
+  "periods": [
+    "2021-07",
+    "2021-08",
+    "test"
+  ]
+}
