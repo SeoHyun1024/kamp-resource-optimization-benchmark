@@ -126,6 +126,74 @@ def test_savings_unsimulated_day_limits_month_max():
     assert (s["month_max_after"], s["saving_kw_month"]) == (212.0, 10.0)
 
 
+def _hours(start, n):
+    return pd.date_range(start, periods=n, freq="h")
+
+
+def test_require_missing_file():
+    try:
+        sim.require("model", "__no_such_file__.json", "09_peak_alert.py")
+    except SystemExit as e:
+        assert "__no_such_file__.json" in str(e) and "09_peak_alert.py" in str(e)
+    else:
+        raise AssertionError("SystemExit이 나야 함")
+
+
+def test_build_frame_common_full_days():
+    idx = _hours("2021-07-01", 72)                       # 3일
+    m3 = pd.DataFrame({"actual_power": 100.0, "predicted_power": 90.0, "planned_on": 1}, index=idx)
+    rnn = pd.Series(0, index=idx[:60])                   # 3일째는 12시간만 있음
+    rf = pd.Series(0, index=idx)
+    hist = pd.DataFrame({"lag_168": 100.0, "same_hour_2w_max": [80.0] * 36 + [120.0] * 36}, index=idx)
+    f = sim.build_frame(m3, rnn, rf, hist)
+    assert len(f) == 48 and f.index.normalize().nunique() == 2
+    assert list(f.columns) == ["power", "m3_forecast", "planned_on", "rnn_alert", "rf_alert", "lag_168", "expected"]
+    assert f.index.is_monotonic_increasing and not f.isna().any().any()
+    assert f["expected"].iloc[0] == 90.0 and f["expected"].iloc[-1] == 120.0     # max(M3 예측, 2주 최대)
+
+
+def _frame():
+    idx = _hours("2021-07-01", 24)
+    return pd.DataFrame({"power": [100.0] * 22 + [185.0, 170.0], "m3_forecast": [100.0] * 22 + [165.0, 175.0],
+                         "planned_on": 1, "rnn_alert": [0] * 22 + [1, 1], "rf_alert": [0] * 22 + [1, 0],
+                         "lag_168": [100.0] * 22 + [180.0, 100.0], "expected": [110.0] * 22 + [165.0, 175.0]}, index=idx)
+
+
+def test_alert_sources_names_directions_and_rules():
+    f = _frame()
+    s = sim.alert_sources(f, {"주의": "RF 단독", "확정": "AND"}, 170, CAP)
+    assert list(s) == ["완벽 예측 (1시간 전)", "완벽 예측 (하루 전)", "M2 주의 (RF 단독)", "M2 확정 (AND)",
+                       "참고: RNN 단독", "M3 하루 전", "1주 전 같은 시각"]
+    assert [v[1] for v in s.values()] == ["after", "any", "after", "after", "after", "any", "any"]
+    for name, (_, _, exp) in s.items():          # 완벽 예측만 받는 쪽도 실제 전력을 안다
+        assert (exp == f["power" if name.startswith("완벽 예측") else "expected"].to_numpy()).all()
+    tail = lambda name: s[name][0][-2:].tolist()
+    assert tail("완벽 예측 (1시간 전)") == [True, False] and tail("M2 주의 (RF 단독)") == [True, False]
+    assert tail("M2 확정 (AND)") == [True, False] and tail("참고: RNN 단독") == [True, True]
+    assert tail("M3 하루 전") == [False, True] and tail("1주 전 같은 시각") == [True, False]
+
+
+def test_alert_sources_confirm_is_subset_of_caution():
+    s = sim.alert_sources(_frame(), {"주의": "RF 단독", "확정": "RNN 단독"}, 170, CAP)
+    assert s["M2 확정 (RNN 단독)"][0][-2:].tolist() == [True, False]
+
+
+def test_alert_sources_unknown_rule():
+    try:
+        sim.alert_sources(_frame(), {"주의": "XGB 단독", "확정": "AND"}, 170, CAP)
+    except ValueError as e:
+        assert "XGB 단독" in str(e)
+    else:
+        raise AssertionError("ValueError가 나야 함")
+
+
+def test_select_m3_cutoff_maximises_f1():
+    f = _frame()
+    f["power"] = [100.0] * 20 + [185.0, 190.0, 185.0, 170.0]
+    f["m3_forecast"] = [100.0] * 20 + [160.0, 172.0, 165.0, 155.0]
+    assert sim.select_m3_cutoff(f, CAP) == 156          # 156~160이 F1 1.0, 같으면 가장 낮은 값
+
+
 if __name__ == "__main__":
     tests = [(n, f) for n, f in sorted(globals().items()) if n.startswith("test_") and callable(f)]
     for name, fn in tests:

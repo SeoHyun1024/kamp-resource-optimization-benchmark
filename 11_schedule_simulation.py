@@ -52,6 +52,9 @@ TARIFF_SOURCE = ("한국전력공사 전기요금표(산업용) https://cyber.ke
                  "이 요금제 최대부하 단가(2013.11.21 시행 109.3/166.7/191.1)보다 각각 0.5 높은 같은 묶음")
 BILLING_SOURCE = ("한국전력공사 기본공급약관 제68조(요금적용전력의 결정) "
                   "https://cyber.kepco.co.kr/ckepco/front/jsp/CY/D/C/CYDCHP00108.jsp")
+M3_CUTOFF_GRID = list(range(150, 180))
+RULES = ["RNN 단독", "RF 단독", "AND", "OR"]                    # 09_peak_alert.py의 후보와 같음
+CEILING = {"after": "완벽 예측 (1시간 전)", "any": "완벽 예측 (하루 전)"}   # 같은 방향 제약의 상한
 
 
 # ---------------- [1] 이동 규칙 ----------------
@@ -131,3 +134,78 @@ def savings(max_after: float, month: int, monthly_max: dict, other_days_max: flo
             "saving_kw_month": before - after, "saving_won_month": (before - after) * rate,
             "saving_rate_month": (before - after) / before,
             "billing_kw_before": b0, "billing_kw_after": b1, "saving_won_12m": (b0 - b1) * rate}
+
+
+# ---------------- [3] 입력·비교 대상 ----------------
+def require(kind: str, name: str, script: str) -> str:
+    path = pp.out(kind, name)
+    if not os.path.exists(path):
+        raise SystemExit(f"[중단] {path} 없음 -> {script} 를 먼저 실행하세요")
+    return path
+
+
+def _read(kind: str, name: str, script: str) -> pd.DataFrame:
+    return pd.read_csv(require(kind, name, script), parse_dates=["Date"]).set_index("Date")
+
+
+def build_frame(m3: pd.DataFrame, rnn_alert: pd.Series, rf_alert: pd.Series, hist: pd.DataFrame) -> pd.DataFrame:
+    """네 입력의 공통 시각 중 24시간이 온전한 날만 남긴 시간별 표. hist = peak_dataset의 lag_168, same_hour_2w_max."""
+    idx = m3.index.intersection(rnn_alert.index).intersection(rf_alert.index).intersection(hist.index).sort_values()
+    if len(idx) < max(len(m3), len(rnn_alert), len(rf_alert)):
+        print(f"[경고] 입력 시각 불일치: M3 {len(m3)} / RNN {len(rnn_alert)} / RF {len(rf_alert)} / 공통 {len(idx)}")
+    f = pd.DataFrame({"power": m3.loc[idx, "actual_power"].astype(float),
+                      "m3_forecast": m3.loc[idx, "predicted_power"].astype(float),
+                      "planned_on": m3.loc[idx, "planned_on"].astype(int),
+                      "rnn_alert": rnn_alert.loc[idx].astype(int), "rf_alert": rf_alert.loc[idx].astype(int),
+                      "lag_168": hist.loc[idx, "lag_168"].astype(float)}, index=idx)
+    f["expected"] = np.maximum(f["m3_forecast"], hist.loc[idx, "same_hour_2w_max"].astype(float))   # 받는 시간의 예상 부하
+    n = f.groupby(f.index.normalize())["power"].transform("size")
+    if (n != 24).any():
+        dropped = sorted({d.strftime("%m-%d") for d in f.index[n != 24].normalize()})
+        print(f"[경고] 24시간이 안 되는 날 제외: {dropped}")
+        f = f.loc[n == 24]
+    assert not f.isna().any().any(), "입력에 결측이 있음"
+    return f
+
+
+def load_frame(period: str, meta: dict) -> pd.DataFrame:
+    hist = _read("prep", "peak_dataset.csv", "preprocessing.py")[["lag_168", "same_hour_2w_max"]]
+    if period == "oof":
+        m3 = _read("detail", "plan_regression_oof.csv", "10_plan_regression.py")
+        rnn = _read("detail", "rnn_oof.csv", "01_rnn.py")["forecast"] >= meta["rnn_cutoff"]
+        rf = _read("detail", "random_forest_oof.csv", "02_random_forest.py")["score"] >= meta["rf_threshold"]
+    else:
+        m3 = _read("pred", "plan_regression_predictions.csv", "10_plan_regression.py")
+        al = _read("pred", "peak_alerts.csv", "09_peak_alert.py")      # 09가 test에 적용한 판정을 그대로 씀
+        rnn, rf = al["rnn_alert"], al["rf_alert"]
+    return build_frame(m3, rnn, rf, hist)
+
+
+def _apply_rule(rule: str, r: np.ndarray, f: np.ndarray) -> np.ndarray:
+    return {"RNN 단독": r, "RF 단독": f, "AND": r & f, "OR": r | f}[rule]
+
+
+def alert_sources(frame: pd.DataFrame, rules: dict, m3_cutoff: float, peak: float) -> dict:
+    """비교 대상별 (경보 배열, 방향, 받는 시간의 예상 부하). 방향 after = 경보 시각 이후로만 이동, any = 앞뒤 모두.
+    완벽 예측은 받는 시간의 부하도 실제 전력으로 안다고 본다 (절감 상한)."""
+    for stage in ("주의", "확정"):
+        if rules.get(stage) not in RULES:
+            raise ValueError(f"peak_alert_meta.json의 {stage} 규칙 '{rules.get(stage)}'은 {RULES} 중 하나여야 함")
+    r, f = frame["rnn_alert"].to_numpy().astype(bool), frame["rf_alert"].to_numpy().astype(bool)
+    power, exp = frame["power"].to_numpy(float), frame["expected"].to_numpy(float)
+    actual = power >= peak
+    caution = _apply_rule(rules["주의"], r, f)
+    confirm = _apply_rule(rules["확정"], r, f) & caution              # 확정은 항상 주의에 포함
+    return {CEILING["after"]: (actual, "after", power),
+            CEILING["any"]: (actual, "any", power),
+            f"M2 주의 ({rules['주의']})": (caution, "after", exp),
+            f"M2 확정 ({rules['확정']})": (confirm, "after", exp),
+            "참고: RNN 단독": (r, "after", exp),
+            "M3 하루 전": (frame["m3_forecast"].to_numpy() >= m3_cutoff, "any", exp),
+            "1주 전 같은 시각": (frame["lag_168"].to_numpy() >= peak, "any", exp)}
+
+
+def select_m3_cutoff(frame: pd.DataFrame, peak: float) -> int:
+    """M3 예측을 경보로 바꾸는 cutoff: OOF F1 최대, 같으면 가장 낮은 값."""
+    y = (frame["power"] >= peak).astype(int)
+    return max(M3_CUTOFF_GRID, key=lambda c: f1_score(y, (frame["m3_forecast"] >= c).astype(int), zero_division=0))
