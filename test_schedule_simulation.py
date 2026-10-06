@@ -93,6 +93,39 @@ def test_simulate_keeps_daily_total_and_never_crosses_days():
     assert adj[10] == 180.0 and adj[34] == 171.0
 
 
+def test_metrics_counts():
+    power, adj = A(170, 190, 100), A(185, 171, 114)
+    m = sim.metrics(power, adj, B(0, 1, 0), 1, CAP, 19.0, 0.0)
+    assert (m["max_before"], m["max_after"], m["reduction_kw"]) == (190.0, 185.0, 5.0)
+    assert (m["peaks_before"], m["peaks_after"], m["new_peaks"], m["missed_peaks"]) == (1, 1, 1, 0)
+    assert (m["adjustments"], m["unnecessary"], m["adjustments_per_day"]) == (1, 0, 1.0)
+
+
+def test_metrics_missed_and_unnecessary():
+    power = A(190, 100, 185)
+    m = sim.metrics(power, power, B(0, 1, 0), 2, CAP, 0.0, 0.0)
+    assert (m["missed_peaks"], m["unnecessary"], m["adjustments_per_day"]) == (2, 1, 0.5)
+
+
+def test_billing_kw_uses_earlier_winter_and_summer_months():
+    assert sim.billing_kw({1: 222.0, 2: 198.0, 3: 230.0, 7: 210.0}, 7) == 222.0   # 3월은 대상 아님
+    assert sim.billing_kw({7: 200.0, 8: 190.0}, 8) == 200.0
+    assert sim.billing_kw({3: 222.0, 4: 199.0}, 4) == 199.0
+
+
+def test_savings_month_basis_and_12m_basis():
+    s = sim.savings(max_after=200.0, month=8, monthly_max={1: 222.0, 7: 222.0, 8: 218.0},
+                    other_days_max=0.0, rate=1000.0)
+    assert (s["saving_kw_month"], s["saving_won_month"]) == (18.0, 18000.0)
+    assert abs(s["saving_rate_month"] - 18.0 / 218.0) < 1e-12
+    assert (s["billing_kw_before"], s["billing_kw_after"], s["saving_won_12m"]) == (222.0, 222.0, 0.0)
+
+
+def test_savings_unsimulated_day_limits_month_max():
+    s = sim.savings(max_after=200.0, month=7, monthly_max={7: 222.0}, other_days_max=212.0, rate=1000.0)
+    assert (s["month_max_after"], s["saving_kw_month"]) == (212.0, 10.0)
+
+
 if __name__ == "__main__":
     tests = [(n, f) for n, f in sorted(globals().items()) if n.startswith("test_") and callable(f)]
     for name, fn in tests:

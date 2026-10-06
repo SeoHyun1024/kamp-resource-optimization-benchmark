@@ -43,6 +43,15 @@ import preprocessing as pp
 
 X_GRID = [0.05, 0.10, 0.20]
 POWER_STEP = 1.0   # 전력 값 단위(kW). 받는 시간은 피크 기준보다 한 단위 아래까지만 채운다 (피크는 기준 이상)
+RATCHET_MONTHS = [12, 1, 2, 7, 8, 9]   # 요금적용전력 산정에 들어가는 달 (+ 당월), 한전 기본공급약관 제68조
+BASE_RATE = 8320                       # 기본요금 단가 (원/kW), 산업용전력(을) 고압A 선택Ⅱ
+BASE_RATE_RANGE = (6490, 9810)         # 산업용 고압A 최저(갑 선택Ⅰ)·최고(을 선택Ⅲ) 단가 (원/kW)
+TARIFF_CONFIRMED = False               # 단가 자체는 요금표로 확인. 이 공장이 그 요금제인지는 추정이라 False
+TARIFF_SOURCE = ("한국전력공사 전기요금표(산업용) https://cyber.kepco.co.kr/ckepco/front/jsp/CY/E/E/CYEEHP00103.jsp : "
+                 "산업용전력(을) 고압A 선택Ⅱ 기본요금 8,320원/kW. 요금제는 추정: 데이터의 전기요금 109.8/167.2/191.6이 "
+                 "이 요금제 최대부하 단가(2013.11.21 시행 109.3/166.7/191.1)보다 각각 0.5 높은 같은 묶음")
+BILLING_SOURCE = ("한국전력공사 기본공급약관 제68조(요금적용전력의 결정) "
+                  "https://cyber.kepco.co.kr/ckepco/front/jsp/CY/D/C/CYDCHP00108.jsp")
 
 
 # ---------------- [1] 이동 규칙 ----------------
@@ -90,3 +99,35 @@ def simulate(frame: pd.DataFrame, alert, expected, x: float, direction: str, cap
         adj[i] = a; unmoved += um
         rows += [(frame.index[i[s]], frame.index[i[d]], kw) for s, d, kw in mv]
     return adj, pd.DataFrame(rows, columns=["from", "to", "kw"]), unmoved
+
+
+# ---------------- [2] 지표·요금 ----------------
+def metrics(power, adj, alert, n_days, peak, moved_kw, unmoved_kw) -> dict:
+    power, adj, alert = np.asarray(power, float), np.asarray(adj, float), np.asarray(alert, bool)
+    was_peak = power >= peak
+    return {"max_before": float(power.max()), "max_after": float(adj.max()),
+            "reduction_kw": float(power.max() - adj.max()),
+            "peaks_before": int(was_peak.sum()), "peaks_after": int((adj >= peak).sum()),
+            "missed_peaks": int((was_peak & ~alert).sum()),          # 경보가 없어 못 깎은 피크
+            "new_peaks": int((~was_peak & (adj >= peak)).sum()),     # 받아서 새로 피크가 된 시간
+            "adjustments": int(alert.sum()), "adjustments_per_day": float(alert.sum() / n_days),
+            "unnecessary": int((alert & ~was_peak).sum()),           # 헛경보로 한 조정
+            "moved_kw": float(moved_kw), "unmoved_kw": float(unmoved_kw)}
+
+
+def billing_kw(monthly_max: dict, month: int) -> float:
+    """요금적용전력: 당월과, 직전 12개월 중 12·1·2·7·8·9월분 최대수요 가운데 가장 큰 값.
+    데이터가 2021-01부터라 같은 해의 앞선 달만 본다 (계약전력 30% 하한은 계약전력을 몰라 적용하지 않음)."""
+    prev = [v for m, v in monthly_max.items() if m < month and m in RATCHET_MONTHS]
+    return float(max([monthly_max[month]] + prev))
+
+
+def savings(max_after: float, month: int, monthly_max: dict, other_days_max: float, rate: float) -> dict:
+    """other_days_max: 그 달에서 시뮬레이션하지 않은 날(복제일 등)의 최대. 조정 후 월 최대의 하한이 된다."""
+    before = float(monthly_max[month])
+    after = float(max(max_after, other_days_max))
+    b0, b1 = billing_kw(monthly_max, month), billing_kw({**monthly_max, month: after}, month)
+    return {"month_max_before": before, "month_max_after": after,
+            "saving_kw_month": before - after, "saving_won_month": (before - after) * rate,
+            "saving_rate_month": (before - after) / before,
+            "billing_kw_before": b0, "billing_kw_after": b1, "saving_won_12m": (b0 - b1) * rate}
