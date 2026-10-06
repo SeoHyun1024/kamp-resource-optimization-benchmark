@@ -17,7 +17,7 @@
       <span class="brand-mark" aria-hidden="true">⚡</span>
       <div>
         <h1>자원 최적화 에이전트</h1>
-        <p class="sub">피크 전력 예측 → 일정 조정안 · KAMP 데이터 2021-09 시뮬레이션</p>
+        <p class="sub">피크 전력 예측 → 일정 조정안 · KAMP 데이터 2021-07~09 시뮬레이션</p>
       </div>
     </div>
     <nav class="tabs" role="tablist" aria-label="화면 선택">
@@ -32,10 +32,10 @@
 
 <main id="main">
   <div class="notice" role="note">
-    <p>실제 운영 결과가 아닌 <strong>2021-09 데이터 시뮬레이션</strong>입니다.</p>
+    <p>실제 운영 결과가 아닌 <strong>2021-07~09 데이터 시뮬레이션</strong>입니다.</p>
     <details class="acc">
       <summary>자세히 보기</summary>
-      <div class="acc-body">2021-09-01~09-14 데이터를 되돌려 본 결과입니다. 이동 가능 비율과 기본요금 단가는 데이터에 없는 값이라 직접 정하는 입력값이고, 기본요금 단가는 예시값입니다.</div>
+      <div class="acc-body">2021-07-07~09-14를 한 주씩 되돌려 본 결과입니다. 각 주는 그 주가 시작되기 전날까지의 데이터로 모델을 다시 학습해 예측했습니다(실제 운영과 같은 조건). 이동 가능 비율과 기본요금 단가는 데이터에 없는 값이라 직접 정하는 입력값이고, 기본요금 단가는 예시값입니다.</div>
     </details>
   </div>
 
@@ -53,8 +53,30 @@
 
   <!-- 관리자 -->
   <section id="view-admin" class="view" role="tabpanel" aria-labelledby="tab-admin">
+    <div class="card" id="a-week-card" hidden>
+      <div class="card-head">
+        <h2>주간 피드백</h2>
+        <div class="week-nav">
+          <button type="button" id="a-prev" aria-label="이전 주">‹</button>
+          <select id="a-week" aria-label="피드백 볼 주"></select>
+          <button type="button" id="a-next" aria-label="다음 주">›</button>
+        </div>
+      </div>
+      <p class="muted" id="a-week-lead"></p>
+    </div>
     <div class="kpis" id="kpis"></div>
     <div class="callout" id="callout"></div>
+    <div class="card" id="a-trend-card" hidden>
+      <h2>주별 추이: 매주 다시 배우는 모델</h2>
+      <p class="muted">점을 누르면 그 주로 이동합니다. 실제 → AI 계획의 차이가 AI의 효과, AI 계획 → 사후 최선의 차이가 예측 오차로 놓친 몫입니다.</p>
+      <div class="legend" id="a-trend-legend"></div>
+      <div class="trend-grid">
+        <div><h3 class="mini">주간 최대수요 (kW)</h3><div class="chart-wrap" id="a-trend-max"></div></div>
+        <div><h3 class="mini">하루 전 예측 오차 MAE (kW)</h3><div class="chart-wrap" id="a-trend-mae"></div></div>
+      </div>
+      <div class="chart-actions"><button type="button" class="link" id="a-trend-table-toggle" aria-expanded="false">표로 보기</button></div>
+      <div id="a-trend-table" class="table-scroll" hidden></div>
+    </div>
 
     <div class="card">
       <div class="card-head">
@@ -80,7 +102,7 @@
     </div>
 
     <div class="card">
-      <h2>전체 기간 요약</h2>
+      <h2 id="a-days-title">전체 기간 요약</h2>
       <div class="table-scroll" id="a-days"></div>
     </div>
 
@@ -123,6 +145,31 @@
         </div>
       </div>
       <p class="muted" id="p-lead"></p>
+    </div>
+    <div class="card" id="p-editor" hidden>
+      <div class="card-head">
+        <h2>계획 고치기</h2>
+        <div class="pe-mode" role="radiogroup" aria-label="칸을 눌렀을 때">
+          <label><input type="radio" name="pe-mode" value="toggle" checked> 누르면 가동 켜기/끄기</label>
+          <label><input type="radio" name="pe-mode" value="prod"> 누르면 생산량 입력</label>
+        </div>
+      </div>
+      <p class="muted">칸 = 그 시간 계획 생산량(빈 칸은 비가동). 고치면 아래 예측이 바로 바뀌고, <b>수정안 만들기</b>를 누르면 피크를 낮추는 안을 계산해요. 마우스로 끌면 여러 칸을 한 번에 켜고 끌 수 있어요.</p>
+      <div class="pe-actions">
+        <button type="button" class="btn primary" id="pe-suggest">수정안 만들기</button>
+        <button type="button" class="btn" id="pe-apply" disabled>수정안을 계획에 반영</button>
+        <button type="button" class="btn" id="pe-reset">처음 계획으로</button>
+        <button type="button" class="btn" id="pe-share">공유 링크 복사</button>
+        <button type="button" class="btn" id="pe-csv">CSV 다운로드</button>
+        <label class="btn" for="pe-file">CSV 불러오기</label><input type="file" id="pe-file" accept=".csv,text/csv" hidden>
+      </div>
+      <p class="pe-status" id="pe-status" aria-live="polite"></p>
+      <input type="text" id="pe-link" class="pe-link" readonly hidden aria-label="공유 링크">
+      <div class="pe-legend">
+        <span><i class="pe-sw on"></i>가동</span><span><i class="pe-sw off"></i>비가동</span>
+        <span><i class="pe-sw changed"></i>처음 계획과 다름</span><span><i class="pe-sw risk"></i>피크 위험 시간 (예측 + 마진 ≥ 기준)</span>
+      </div>
+      <div class="pe-scroll"><table class="pe-grid" id="pe-grid"></table></div>
     </div>
     <div class="kpis" id="p-kpis"></div>
     <div class="card">
@@ -170,5 +217,6 @@
 <div id="live" class="sr" aria-live="polite"></div>
 <script src="data/agent_data.js"></script>
 <script src="app.js"></script>
+<!-- web/plan_engine.js 와 data/plan_editor.js 는 '주간 계획 > 직접 편집'을 고를 때 불러온다 -->
 </body>
 </html>

@@ -7,18 +7,20 @@
   "peak_threshold": 179.0,
   "margin": 8.0,
   "pred_week_max_before": 191.4,
-  "pred_week_max_after": 190.4,
-  "days_lowered": 4,
-  "avg_cut_on_lowered_days": 1.4,
-  "max_rise_on_receiving_days": 6.4,
+  "pred_week_max_after": 188.1,
+  "days_lowered": 3,
+  "avg_cut_on_lowered_days": 5.0,
+  "max_rise_on_receiving_days": 7.4,
   "risk_hours_before": 41,
-  "risk_hours_after": 41,
-  "moved_production": 7923.0,
+  "risk_hours_after": 40,
+  "moved_production": 18583.0,
   "total_production": 96553.0,
-  "n_moves": 4,
+  "n_moves": 3,
   "new_hours": 0,
   "price": 8000,
-  "monthly_saving_est": 8243.0
+  "monthly_saving_est": 26209.0,
+  "day_prod_p99": 25989.0,
+  "out_of_range_days": []
  },
  "days": [
   {
@@ -27,11 +29,12 @@
    "on_before": 24,
    "on_after": 24,
    "prod_before": 20652.0,
-   "prod_after": 18586.8,
+   "prod_after": 14456.399999999998,
    "pred_max_before": 189.5,
-   "pred_max_after": 187.7,
+   "pred_max_after": 183.9,
    "risk_before": 9,
-   "risk_after": 9
+   "risk_after": 8,
+   "out_of_range": false
   },
   {
    "date": "2021-09-16",
@@ -39,11 +42,12 @@
    "on_before": 24,
    "on_after": 24,
    "prod_before": 20639.0,
-   "prod_after": 18575.1,
+   "prod_after": 14447.3,
    "pred_max_before": 187.6,
-   "pred_max_after": 186.6,
+   "pred_max_after": 182.9,
    "risk_before": 8,
-   "risk_after": 8
+   "risk_after": 8,
+   "out_of_range": false
   },
   {
    "date": "2021-09-17",
@@ -51,11 +55,12 @@
    "on_before": 24,
    "on_after": 24,
    "prod_before": 20653.0,
-   "prod_after": 18587.7,
+   "prod_after": 14457.099999999999,
    "pred_max_before": 191.4,
-   "pred_max_after": 190.4,
+   "pred_max_after": 186.8,
    "risk_before": 8,
-   "risk_after": 8
+   "risk_after": 8,
+   "out_of_range": false
   },
   {
    "date": "2021-09-18",
@@ -63,11 +68,12 @@
    "on_before": 8,
    "on_after": 8,
    "prod_before": 2800.0,
-   "prod_after": 10722.8,
+   "prod_after": 21383.200000000004,
    "pred_max_before": 108.3,
-   "pred_max_after": 114.7,
+   "pred_max_after": 115.7,
    "risk_before": 0,
-   "risk_after": 0
+   "risk_after": 0,
+   "out_of_range": false
   },
   {
    "date": "2021-09-19",
@@ -79,7 +85,8 @@
    "pred_max_before": 24.7,
    "pred_max_after": 24.7,
    "risk_before": 0,
-   "risk_after": 0
+   "risk_after": 0,
+   "out_of_range": false
   },
   {
    "date": "2021-09-20",
@@ -91,7 +98,8 @@
    "pred_max_before": 185.0,
    "pred_max_after": 185.0,
    "risk_before": 8,
-   "risk_after": 8
+   "risk_after": 8,
+   "out_of_range": false
   },
   {
    "date": "2021-09-21",
@@ -99,11 +107,12 @@
    "on_before": 24,
    "on_after": 24,
    "prod_before": 17284.0,
-   "prod_after": 15555.6,
+   "prod_after": 17284.0,
    "pred_max_before": 188.1,
-   "pred_max_after": 186.4,
+   "pred_max_after": 188.1,
    "risk_before": 8,
-   "risk_after": 8
+   "risk_after": 8,
+   "out_of_range": false
   }
  ],
  "allow_new_hours": false

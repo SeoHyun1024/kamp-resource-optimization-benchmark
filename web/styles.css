@@ -280,3 +280,53 @@ tr.sel td { background: var(--in-bg); }
 .plan-pick label { min-width: 0; max-width: 100%; flex: 1 1 240px; }
 .plan-pick select { min-width: 0; max-width: 100%; flex: 1 1 auto; text-overflow: ellipsis; }
 #view-plan > * { min-width: 0; }
+
+/* ── 주간 피드백 (관리자) ───────────────────────────── */
+.week-nav select { background: var(--surface); border: 1px solid var(--line); border-radius: 8px; padding: 5px 8px; min-width: 0; max-width: 100%; }
+.week-nav { min-width: 0; max-width: 100%; }
+.trend-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: 14px; }
+.trend-grid > div { min-width: 0; }
+h3.mini { font-size: 13px; color: var(--text-2); font-weight: 600; margin: 4px 0 2px; }
+.chart-wrap .pt { cursor: pointer; }
+.kpi .trio { font-size: 13px; color: var(--text-2); margin-top: 2px; }
+.kpi .trio b { color: var(--text); }
+.callout ul { margin: 6px 0 0; padding-left: 18px; }
+.callout li + li { margin-top: 4px; }
+#a-week-card .card-head { min-width: 0; }
+#a-week-card .week-nav { flex: 1 1 260px; justify-content: flex-end; }
+#a-week-card .week-nav select { flex: 1 1 auto; width: 0; max-width: 340px; text-overflow: ellipsis; }
+#view-admin > * { min-width: 0; }
+
+/* ── 계획 편집기 ─────────────────────────────────────── */
+.pe-mode { display: flex; flex-wrap: wrap; gap: 4px 14px; font-size: 13px; color: var(--text-2); }
+.pe-mode label { display: flex; align-items: center; gap: 5px; cursor: pointer; }
+.pe-actions { display: flex; flex-wrap: wrap; gap: 8px; margin: 10px 0 4px; }
+.btn { border: 1px solid var(--line); background: var(--surface); color: var(--text); border-radius: 9px; padding: 6px 12px; font-size: 13px; font-weight: 600; cursor: pointer; }
+.btn:hover:not(:disabled) { background: var(--surface-2); }
+.btn:disabled { opacity: .45; cursor: default; }
+.btn.primary { background: var(--blue); border-color: var(--blue); color: #fff; }
+.btn.primary:hover:not(:disabled) { background: var(--blue); filter: brightness(1.08); }
+.pe-status { font-size: 13px; color: var(--text-2); min-height: 1.4em; margin: 2px 0; }
+.pe-link { width: 100%; font-size: 12px; background: var(--surface-2); border: 1px solid var(--line); border-radius: 8px; padding: 6px 8px; color: var(--text); }
+.pe-legend { display: flex; flex-wrap: wrap; gap: 4px 14px; font-size: 12.5px; color: var(--text-2); margin: 6px 0; }
+.pe-sw { display: inline-block; width: 14px; height: 12px; border-radius: 3px; vertical-align: -1px; margin-right: 5px; border: 1px solid var(--line); }
+.pe-sw.on { background: var(--normal-bg); }
+.pe-sw.off { background: var(--off-bg); background-image: repeating-linear-gradient(135deg, transparent 0 4px, rgba(128,128,128,.25) 4px 5px); }
+.pe-sw.changed { background: var(--surface); border: 2px solid var(--blue); }
+.pe-sw.risk { background: var(--surface); border-left: 4px solid var(--orange); }
+.pe-scroll { overflow-x: auto; border: 1px solid var(--line); border-radius: 12px; max-height: 70vh; overflow-y: auto; }
+.pe-grid { border-collapse: separate; border-spacing: 0; width: 100%; min-width: 640px; font-size: 12px; user-select: none; }
+.pe-grid th, .pe-grid td { padding: 0; border-bottom: 1px solid var(--grid); text-align: center; white-space: nowrap; }
+.pe-grid thead th { position: sticky; top: 0; z-index: 2; background: var(--surface); padding: 6px 4px; font-size: 12.5px; border-bottom: 1px solid var(--line); }
+.pe-grid thead th small { display: block; font-weight: 400; color: var(--text-3); font-size: 11px; }
+.pe-grid th.hr { position: sticky; left: 0; z-index: 1; background: var(--surface); color: var(--text-3); font-weight: 400; width: 44px; padding: 0 6px; text-align: right; }
+.pe-grid thead th.hr { z-index: 3; }
+.pe-cell { display: block; width: 100%; height: 26px; border: 0; border-left: 1px solid var(--grid); background: var(--normal-bg); color: var(--text); font-size: 12px; font-variant-numeric: tabular-nums; cursor: pointer; padding: 0 4px; position: relative; }
+.pe-cell.off { background: var(--off-bg); color: var(--text-3); background-image: repeating-linear-gradient(135deg, transparent 0 6px, rgba(128,128,128,.14) 6px 7px); }
+.pe-cell.risk { box-shadow: inset 4px 0 0 var(--orange); }
+.pe-cell.changed { outline: 2px solid var(--blue); outline-offset: -2px; }
+.pe-cell:focus-visible { outline: 2px solid var(--focus); outline-offset: -2px; z-index: 1; }
+.pe-cell input { width: 100%; height: 100%; border: 0; background: var(--surface); color: var(--text); font: inherit; text-align: center; }
+.pe-grid tfoot td, .pe-grid tfoot th { position: sticky; bottom: 0; background: var(--surface); border-top: 1px solid var(--line); padding: 4px 2px; }
+.pe-grid tfoot input { width: 100%; min-width: 0; max-width: 90px; font: inherit; font-size: 12px; text-align: right; background: var(--surface); border: 1px solid var(--line); border-radius: 6px; padding: 3px 5px; color: var(--text); }
+.pe-grid tfoot input.oor { border-color: var(--orange); }

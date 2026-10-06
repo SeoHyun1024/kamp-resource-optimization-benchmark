@@ -5,8 +5,9 @@ M1(가동 캘린더)·M2(피크 경보)·M3(하루 전 예측)·M4(일정 조정
 web/ 의 관리자 화면·근로자 시간표·챗봇이 읽게 한다. 웹은 서버가 없는 정적 페이지(GitHub Pages)라서
 모든 값을 여기서 미리 계산해 둔다. 수치는 results/ 의 파일에서 읽고, 여기서 새로 만들지 않는다.
 
-실행 순서: 08 -> 09 -> 10 -> 11 -> 12.   python 12_build_report.py   ->  web/data/agent_data.js
+실행 순서: 08 -> 09 -> 10 -> 11 -> 15 -> 12.  (15_weekly_feedback.py 결과가 있으면 관리자 화면은 주간 피드백 10주로 만든다)   python 12_build_report.py   ->  web/data/agent_data.js
 주간 계획 탭(선택): 13 -> 14 --web-examples 를 먼저 실행하면 plans/out/web/ 결과를 함께 넣는다. 없으면 그 탭은 비워 둔다.
+14 --plan <CSV> --publish <이름> 으로 올린 내 계획도 같은 폴더에 등록되어 함께 들어간다(14가 12를 자동 재실행).
 표준 라이브러리만 사용한다.
 """
 from __future__ import annotations
@@ -61,15 +62,24 @@ def load_plan_advice():
                  if k in rows[0]}
         hours["on_before"] = [int(r["on_before"]) for r in rows]
         hours["on_after"] = [int(r["on"]) for r in rows]
+        mode = modes["modes"]["ext" if ex["ext"] else "base"]
         weeks[ex["key"]] = {
             "start": ex["start"], "ext": ex["ext"], "summary": sm["summary"], "days": sm["days"],
+            "group": ex.get("group", ex["key"].removesuffix("_ext")), "label": ex.get("label", ex["key"]),
+            "source": ex.get("source", "example"),
+            "allow_new": ex.get("allow_new", mode["allow_new"]), "max_move_share": ex.get("max_move_share", mode["max_move_share"]),
             "time": [f"{r['date']} {int(r['hour']):02d}" for r in rows], "hours": hours,
             "moves": [{"kind": m["kind"], "from": m["from"], "to": m["to"], "qty": float(m["qty"]),
-                       "new_hours": m["new_hours"].split() if m["new_hours"] else []} for m in moves],
+                       "new_hours": m["new_hours"].split(";") if m["new_hours"] else []} for m in moves],
         }
     with open(os.path.join(RES, "5_models", "week_ahead_meta.json"), encoding="utf-8") as f:
         wm = json.load(f)
-    return {"modes": modes["modes"], "weeks": weeks,
+    editor_path = os.path.join(PLAN_WEB, "editor_index.json")
+    editor = []
+    if os.path.exists(editor_path) and os.path.exists(os.path.join(HERE, "web", "data", "plan_editor.js")):
+        with open(editor_path, encoding="utf-8") as f:
+            editor = json.load(f)
+    return {"modes": modes["modes"], "weeks": weeks, "editor": editor,
             "model": {"test_mae": wm["test"]["MAE"], "test_daily_max_mae": wm["test"]["daily_max_MAE"],
                       "cv_mae": wm["cv_MAE"], "margin": wm["safety_margin_kw"], "trained_until": wm["trained_until"]}}
 
@@ -77,8 +87,22 @@ def load_plan_advice():
 def main():
     if hasattr(sys.stdout, "reconfigure"):
         sys.stdout.reconfigure(encoding="utf-8")
-    m4 = importlib.import_module("11_schedule_adjust")
-    days, scenarios, meta4 = m4.main()
+    # 관리자 화면 데이터: 15_weekly_feedback.py 결과(주마다 다시 학습한 7/7~9/14 10주)가 있으면 그것을,
+    # 없으면 11_schedule_adjust.py 결과(8/31까지 학습한 모델 하나로 본 9/1~9/14)를 쓴다.
+    fb_path = os.path.join(RES, "4_model_details", "weekly_feedback.json")
+    fb = None
+    if os.path.exists(fb_path):
+        with open(fb_path, encoding="utf-8") as f:
+            fb = json.load(f)
+        meta4 = fb["meta"]
+        days = {d: [{"day_type": v["day_type"], "actual": a, "pred": p, "on": o, "m2": m}
+                    for a, p, o, m in zip(v["actual"], v["pred"], v["on"], v["m2"])] for d, v in fb["days"].items()}
+        scenarios = fb["scenarios"]
+        print(f"[정보] 관리자 화면: 주간 피드백 {len(fb['weeks'])}주 ({min(days)} ~ {max(days)})")
+    else:
+        print("[주의] results/4_model_details/weekly_feedback.json 이 없어 11 결과(9/1~9/14)로 만듭니다. (python 15_weekly_feedback.py)")
+        m4 = importlib.import_module("11_schedule_adjust")
+        days, scenarios, meta4 = m4.main()
 
     # M2 / M3 근거 수치 (README와 같은 파일에서 읽는다)
     alert = pick(read_csv("3_comparison", "peak_alert_summary.csv"), "", "주의 이상 (RF 단독)")
@@ -101,6 +125,8 @@ def main():
             "on": [x["on"] for x in hours],
             "m2": [x["m2"] for x in hours],
         }
+        if fb:
+            out_days[d]["on_actual"] = fb["days"][d]["on_actual"]
 
     payload = {
         "meta": {
@@ -119,15 +145,23 @@ def main():
                 "m2_alert": {"precision": round(float(alert["Precision"]), 3), "recall": round(float(alert["Recall"]), 3)},
                 "m2_confirm": {"precision": round(float(confirm["Precision"]), 3), "recall": round(float(confirm["Recall"]), 3)},
             },
-            "notes": [
+            "notes": ([
+                f"{min(days)}~{max(days)}를 주마다 되돌려 본 시뮬레이션이며 실제 운영 결과가 아닙니다.",
+                "각 주는 그 주 시작 전날까지의 데이터로 M3를 다시 학습해 예측하고, 일정 조정 효과는 같은 날의 실제 전력에 적용해 계산했습니다.",
+                "이동 가능 비율·기본요금 단가는 데이터에 없는 운영 조건이므로 입력값입니다.",
+            ] if fb else [
                 "2021-09-01~09-14 test 구간을 되돌려 본 시뮬레이션이며 실제 운영 결과가 아닙니다.",
                 "일정은 M3 하루 전 예측과 가동 계획으로 짜고, 효과는 같은 날의 실제 전력에 적용해 계산했습니다.",
                 "이동 가능 비율·기본요금 단가는 데이터에 없는 운영 조건이므로 입력값입니다.",
-            ],
+            ]),
+            "feedback": bool(fb),
+            "excluded_days": fb["meta"]["excluded_days"] if fb else [],
         },
         "days": out_days,
         "scenarios": {k: {"share": s["share"], "margin": s["margin"], "summary": s["summary"], "days": s["days"]}
                       for k, s in scenarios.items()},
+        "weeks": fb["weeks"] if fb else None,
+        "hindsight": fb["hindsight"] if fb else None,
         "plan_advice": load_plan_advice(),
     }
     os.makedirs(os.path.dirname(OUT), exist_ok=True)
