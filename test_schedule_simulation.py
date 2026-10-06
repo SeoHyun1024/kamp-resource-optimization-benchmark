@@ -194,6 +194,23 @@ def test_select_m3_cutoff_maximises_f1():
     assert sim.select_m3_cutoff(f, CAP) == 156          # 156~160이 F1 1.0, 같으면 가장 낮은 값
 
 
+def test_run_period_rows_baseline_and_ratio():
+    f = _frame()
+    sources = sim.alert_sources(f, {"주의": "RF 단독", "확정": "AND"}, 170, CAP)
+    bill = {"month": 7, "monthly_max": {7: 185.0}, "other_days_max": 0.0, "rate": 1000.0}
+    summary, hourly, moves = sim.run_period(f, "2021-07", sources, CAP, bill)
+    assert len(summary) == 1 + len(sources) * len(sim.X_GRID)
+    base = summary.iloc[0]
+    assert base["source"] == "조정 전" and base["reduction_kw"] == 0.0 and base["peaks_after"] == 1
+    top = summary[(summary["source"] == "완벽 예측 (하루 전)") & (summary["x"] == 0.10)].iloc[0]
+    assert abs(top["max_after"] - 170.0) < 1e-9 and top["achieved_ratio"] == 1.0   # 170 = 경보가 없던 23시
+    assert top["new_peaks"] == 0 and top["unmoved_kw"] == 0.0
+    m3 = summary[(summary["source"] == "M3 하루 전") & (summary["x"] == 0.10)].iloc[0]
+    assert m3["reduction_kw"] == 0.0 and m3["achieved_ratio"] == 0.0 and m3["missed_peaks"] == 1
+    assert set(hourly.columns) == {"period", "source", "x", "Date", "before", "after", "alert"}
+    assert set(moves.columns) == {"from", "to", "kw", "period", "source", "x"}
+
+
 if __name__ == "__main__":
     tests = [(n, f) for n, f in sorted(globals().items()) if n.startswith("test_") and callable(f)]
     for name, fn in tests:

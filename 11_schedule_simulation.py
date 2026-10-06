@@ -209,3 +209,130 @@ def select_m3_cutoff(frame: pd.DataFrame, peak: float) -> int:
     """M3 예측을 경보로 바꾸는 cutoff: OOF F1 최대, 같으면 가장 낮은 값."""
     y = (frame["power"] >= peak).astype(int)
     return max(M3_CUTOFF_GRID, key=lambda c: f1_score(y, (frame["m3_forecast"] >= c).astype(int), zero_division=0))
+
+
+# ---------------- [4] 실행 ----------------
+def run_period(frame: pd.DataFrame, label: str, sources: dict, peak: float, bill: dict):
+    """한 기간의 대상 x x 전체 시뮬레이션. 반환: (요약, 시간별 조정 전·후, 이동 기록)"""
+    cap = peak - POWER_STEP
+    power = frame["power"].to_numpy(float)
+    n_days = frame.index.normalize().nunique()
+    base = metrics(power, power, np.zeros(len(power), bool), n_days, peak, 0.0, 0.0)
+    rows = [{"period": label, "source": "조정 전", "direction": "-", "x": 0.0, **base, **savings(base["max_after"], **bill)}]
+    hourly, moves_all = [], []
+    for name, (alert, direction, expected) in sources.items():
+        for x in X_GRID:
+            adj, moves, unmoved = simulate(frame, alert, expected, x, direction, cap)
+            m = metrics(power, adj, alert, n_days, peak, moves["kw"].sum(), unmoved)
+            rows.append({"period": label, "source": name, "direction": direction, "x": x, **m, **savings(m["max_after"], **bill)})
+            hourly.append(pd.DataFrame({"period": label, "source": name, "x": x, "Date": frame.index,
+                                        "before": power, "after": adj, "alert": np.asarray(alert).astype(int)}))
+            moves_all.append(moves.assign(period=label, source=name, x=x))
+    summary = pd.DataFrame(rows)
+    ceil = summary.set_index(["source", "x"])["reduction_kw"]
+
+    def ratio(r):                       # 같은 방향 제약의 완벽 예측 대비 달성률
+        top = ceil.get((CEILING.get(r["direction"]), r["x"]), np.nan)
+        return r["reduction_kw"] / top if top and top > 0 else np.nan
+    summary["achieved_ratio"] = summary.apply(ratio, axis=1)
+    return summary, pd.concat(hourly, ignore_index=True), pd.concat(moves_all, ignore_index=True)
+
+
+def bill_context(clean: pd.DataFrame, frame: pd.DataFrame, month: int) -> dict:
+    monthly_max = clean.groupby(clean.index.month)["power"].max().to_dict()
+    in_month = clean.loc[clean.index.month == month, "power"]
+    other = in_month.loc[~in_month.index.normalize().isin(frame.index.normalize())]
+    return {"month": month, "monthly_max": monthly_max,
+            "other_days_max": float(other.max()) if len(other) else 0.0, "rate": BASE_RATE}
+
+
+def plot(summary: pd.DataFrame, hourly: pd.DataFrame, peak: float, path: str) -> None:
+    periods = list(summary["period"].unique())
+    fig, axes = plt.subplots(1, len(periods) + 1, figsize=(6 * (len(periods) + 1), 5))
+    for ax, p in zip(axes, periods):
+        s = summary[(summary["period"] == p) & (summary["source"] != "조정 전")]
+        piv = s.pivot(index="source", columns="x", values="reduction_kw").loc[s["source"].unique()]
+        piv.columns = [f"x={c:.0%}" for c in piv.columns]
+        piv.plot.barh(ax=ax)
+        ax.set_title(f"{p} 최대수요 감소량 (kW)"); ax.set_ylabel(""); ax.invert_yaxis()
+    last = periods[-1]
+    h = hourly[(hourly["period"] == last) & (hourly["source"].str.startswith("M2 주의")) & (hourly["x"] == 0.10)].set_index("Date")
+    day = h["before"].idxmax().normalize()                       # 그 기간 최대수요가 난 날
+    d = h.loc[h.index.normalize() == day]
+    axes[-1].step(d.index.hour, d["before"], where="mid", label="조정 전")
+    axes[-1].step(d.index.hour, d["after"], where="mid", label="조정 후 (M2 주의, x=10%)")
+    axes[-1].axhline(peak, color="gray", ls="--", lw=1, label=f"피크 기준 {peak:.0f}")
+    axes[-1].set_title(f"{day:%m-%d} 시간별 전력"); axes[-1].set_xlabel("시"); axes[-1].legend()
+    fig.tight_layout(); fig.savefig(path, dpi=150); plt.close(fig)
+
+
+def main(oof_only: bool) -> None:
+    try:
+        from matplotlib import font_manager
+        names = {f.name for f in font_manager.fontManager.ttflist}
+        for f in ["Malgun Gothic", "AppleGothic", "NanumGothic", "Noto Sans CJK KR", "Noto Sans CJK JP"]:
+            if f in names:
+                plt.rcParams["font.family"] = f; break
+        plt.rcParams["axes.unicode_minus"] = False
+    except Exception:
+        pass
+
+    with open(require("model", "peak_alert_meta.json", "09_peak_alert.py"), encoding="utf-8") as fp:
+        meta = json.load(fp)
+    peak = float(meta["peak_threshold"])
+    clean = pd.read_csv(require("prep", "clean_hourly.csv", "preprocessing.py"), parse_dates=["Date"]).set_index("Date")
+
+    oof = load_frame("oof", meta)
+    m3_cutoff = select_m3_cutoff(oof, peak)
+    print(f"[기준] 피크 {peak:.0f} | x {X_GRID} | 받는 상한 {peak - POWER_STEP:.0f} | M3 cutoff {m3_cutoff} (7·8월 OOF F1 최대)")
+    print(f"[조합] 주의 = {meta['rules']['주의']}, 확정 = {meta['rules']['확정']} | 기본요금 {BASE_RATE:,}원/kW")
+
+    frames = [(f"2021-{m:02d}", m, oof.loc[oof.index.month == m]) for m in sorted(oof.index.month.unique())]
+    if not oof_only:
+        test = load_frame("test", meta)
+        frames.append(("test", int(test.index.month[0]), test))
+    parts = []
+    for label, month, frame in frames:
+        bill = bill_context(clean, frame, month)
+        assert bill["monthly_max"][month] >= frame["power"].max(), "월 최대가 기간 최대보다 작음"
+        parts.append(run_period(frame, label, alert_sources(frame, meta["rules"], m3_cutoff, peak), peak, bill))
+    summary = pd.concat([p[0] for p in parts], ignore_index=True)
+    hourly = pd.concat([p[1] for p in parts], ignore_index=True)
+    moves = pd.concat([p[2] for p in parts], ignore_index=True)
+
+    summary.to_csv(pp.out("cmp", "schedule_simulation_summary.csv"), index=False, encoding="utf-8-sig")
+    hourly.to_csv(pp.out("detail", "schedule_simulation_hourly.csv"), index=False, encoding="utf-8-sig")
+    plot(summary, hourly, peak, pp.out("fig", "schedule_simulation.png"))
+    if not oof_only:
+        moves[moves["period"] == "test"].drop(columns="period").to_csv(
+            pp.out("pred", "schedule_adjustments.csv"), index=False, encoding="utf-8-sig")
+    out_meta = {"script": "11_schedule_simulation.py", "peak_threshold": peak, "x_grid": X_GRID, "receive_cap": peak - POWER_STEP,
+                "rules": meta["rules"], "rnn_cutoff": meta["rnn_cutoff"], "rf_threshold": meta["rf_threshold"],
+                "m3_cutoff": m3_cutoff, "m3_cutoff_selection": "7·8월 OOF F1 최대 (7·8월의 M3 결과는 낙관적)",
+                "shift_rule": "경보 시간 부하의 x%를 같은 날 현실 계획상 가동 시간 중 예상 부하가 낮은 순으로 이동. "
+                              "예상 부하 = max(M3 예측, 2주 내 같은 시각 최대). 한 시간이 받는 양은 피크 기준 - 1까지의 여유와 "
+                              "예상 부하의 x% 중 작은 값. 1시간 전 대상은 이후 시간만, 하루 전 대상은 경보 없는 시간 앞뒤 모두. "
+                              "못 옮긴 양은 깎지 않음. 완벽 예측은 받는 시간의 부하도 실제 전력으로 앎",
+                "rule_revision": "처음 규칙(예상 부하 = M3 예측, 시간당 한도 없음)은 7·8월 OOF에서 최대수요를 키워 수정함. test 미사용",
+                "base_rate_won_per_kw": BASE_RATE, "base_rate_range": list(BASE_RATE_RANGE),
+                "tariff_confirmed": TARIFF_CONFIRMED, "tariff_source": TARIFF_SOURCE, "billing_source": BILLING_SOURCE,
+                "billing_rule": f"요금적용전력 = 당월과 직전 12개월 중 {RATCHET_MONTHS}월분 최대수요 중 최댓값 (데이터는 2021-01부터)",
+                "periods": [label for label, _, _ in frames]}
+    with open(pp.out("model", "schedule_simulation_meta.json"), "w", encoding="utf-8") as fp:
+        json.dump(out_meta, fp, ensure_ascii=False, indent=2)
+
+    pd.set_option("display.width", 250)
+    show = ["source", "x", "max_after", "reduction_kw", "achieved_ratio", "peaks_after", "missed_peaks", "new_peaks",
+            "adjustments_per_day", "unnecessary", "unmoved_kw", "saving_won_month", "saving_won_12m"]
+    for label, _, frame in frames:
+        s = summary[summary["period"] == label]
+        b = s.iloc[0]
+        print(f"\n=== {label} ({frame.index.normalize().nunique()}일, 피크 {b['peaks_before']}건, 최대 {b['max_before']:.0f} kW, "
+              f"월 최대 {b['month_max_before']:.0f} kW, 요금적용전력 {b['billing_kw_before']:.0f} kW) ===")
+        print(s.iloc[1:][show].round(2).to_string(index=False))
+
+
+if __name__ == "__main__":
+    ap = argparse.ArgumentParser()
+    ap.add_argument("--oof-only", action="store_true", help="7·8월 OOF만 실행 (test는 건드리지 않음)")
+    main(ap.parse_args().oof_only)
