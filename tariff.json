@@ -1,0 +1,21 @@
+{
+  "_comment": "기본요금 단가 설정. 단가가 바뀌면 이 파일만 고친 뒤 11_schedule_simulation.py, 14_plan_advisor.py --web-examples, 12_build_report.py 순서로 다시 실행한다.",
+  "price": 7470,
+  "unit": "원/kW·월",
+  "label": "산업용(갑)Ⅱ 고압A 선택Ⅱ (추정)",
+  "basis": "2021년 요금 기준 · 현행과 동일",
+  "confirmed": false,
+  "range": [6490, 9810],
+  "range_note": "산업용 고압A 기본요금 최저(갑 선택Ⅰ)·최고(을 선택Ⅲ)",
+  "estimate_reason": [
+    "산업용(갑): 2021년 최대수요 222kW라 계약전력 300kW 미만으로 추정 (산업용(을)은 300kW 이상)",
+    "갑Ⅱ: 시간대별 요금 체계라 시간대별 피크·생산 이동 분석과 맞음. 기본요금 단가는 갑Ⅰ과 같음",
+    "선택Ⅱ: 월 사용량 6.5만~8.3만 kWh ÷ 계약전력 약 280kW ≈ 월 230~300시간 (통상 200~500시간 구간)",
+    "반대 근거: 데이터의 전기요금 열(109.8/167.2/191.6)은 산업용(을) 고압A 선택Ⅱ의 최대부하 단가와 0.5씩만 다름"
+  ],
+  "source": "한국전력공사 전기요금표(산업용) https://cyber.kepco.co.kr/ckepco/front/jsp/CY/E/E/CYEEHP00103.jsp (기본요금 단가 2013.11 이후 동일)",
+  "billing_rule": "요금적용전력 = 검침 당월 포함 직전 12개월 중 12·1·2·7·8·9월분과 당월분 최대수요전력 중 가장 큰 값 (계약전력 30% 하한)",
+  "billing_source": "한국전력공사 기본공급약관 제68조(요금적용전력의 결정) https://cyber.kepco.co.kr/ckepco/front/jsp/CY/D/C/CYDCHP00108.jsp",
+  "ratchet_months": [12, 1, 2, 7, 8, 9],
+  "updated": "2026-10-06"
+}

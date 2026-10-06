@@ -1,0 +1,21 @@
+{
+  "script": "11_schedule_adjust.py",
+  "peak_threshold": 179.0,
+  "default": "r10_m8",
+  "shares": [
+    0.0,
+    0.05,
+    0.1,
+    0.15,
+    0.2,
+    0.3
+  ],
+  "margins": [
+    0.0,
+    8.0,
+    15.0
+  ],
+  "dest_buffer_kw": 10.0,
+  "max_shift_h": 6,
+  "note": "이동 가능 비율·안전 마진은 운영 조건이라 격자로 계산. 요금 단가는 데이터에 없어 입력값으로 처리."
+}

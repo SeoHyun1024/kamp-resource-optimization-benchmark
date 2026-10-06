@@ -86,6 +86,16 @@ def out(kind: str, name: str) -> str:
     os.makedirs(d, exist_ok=True)
     return os.path.join(d, name)
 
+TARIFF_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "tariff.json")
+
+
+def load_tariff() -> dict:
+    """기본요금 단가 설정(tariff.json). 단가는 바뀌므로 코드에 쓰지 않고 이 파일 하나에서 읽는다."""
+    with open(TARIFF_PATH, encoding="utf-8") as f:
+        t = json.load(f)
+    assert t["price"] > 0 and t["range"][0] <= t["range"][1], "tariff.json의 단가 값이 이상합니다."
+    return t
+
 SEED = 42
 QUARTERS = ["15분", "30분", "45분", "60분"]
 
