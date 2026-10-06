@@ -1,0 +1,75 @@
+{
+  "script": "13_week_ahead.py",
+  "task": "1주 전 시간별 전력 회귀 (가동·생산 계획 연계)",
+  "horizon_hours": 168,
+  "features": [
+    "lag_168",
+    "lag_336",
+    "lag_504",
+    "same_hour_3w_mean",
+    "same_hour_3w_max",
+    "last_op_day_same_hour",
+    "past_week_mean",
+    "past_week_max",
+    "past_day_max_w",
+    "temp_week_mean",
+    "hour",
+    "day_of_week",
+    "plan_on",
+    "plan_on_prev",
+    "plan_on_next",
+    "plan_hours_since_on",
+    "plan_hours_until_off",
+    "plan_on_hours",
+    "plan_first_on_hour",
+    "plan_last_on_hour",
+    "plan_day_type",
+    "plan_prod",
+    "plan_prod_roll3",
+    "plan_prod_day"
+  ],
+  "params": {
+    "num_leaves": 15,
+    "learning_rate": 0.1,
+    "min_child_samples": 10,
+    "objective": "huber"
+  },
+  "n_estimators": 1600,
+  "monotone_up": [
+    "plan_on",
+    "plan_prod",
+    "plan_prod_day",
+    "plan_prod_roll3"
+  ],
+  "trained_until": "2021-09-14 23:00:00",
+  "backtest_model": {
+    "file": "week_ahead_until_0831.joblib",
+    "trained_until": "2021-08-31 23:00:00",
+    "n_estimators": 1505
+  },
+  "peak_threshold": 179.0,
+  "hour_on_threshold": 41.0,
+  "safety_margin_kw": 8.0,
+  "margin_basis": "예측 + 마진 >= 피크 기준을 경보로 볼 때 CV(7·8월, 실행 계획) F1 최대 (4_model_details/week_ahead_margin_cv.csv)",
+  "cv_MAE": 8.341,
+  "test": {
+    "MAE": 6.443,
+    "RMSE": 9.511,
+    "on_hour_MAE": 8.002,
+    "peak_hour_MAE": 5.395,
+    "daily_max_MAE": 4.696,
+    "daily_max_bias": -1.93,
+    "peak_recall@179": 0.936,
+    "peak_precision@179": 0.571
+  },
+  "test_usual_plan": {
+    "MAE": 6.572,
+    "RMSE": 9.62,
+    "on_hour_MAE": 8.172,
+    "peak_hour_MAE": 5.675,
+    "daily_max_MAE": 4.914,
+    "daily_max_bias": -1.302,
+    "peak_recall@179": 0.957,
+    "peak_precision@179": 0.577
+  }
+}

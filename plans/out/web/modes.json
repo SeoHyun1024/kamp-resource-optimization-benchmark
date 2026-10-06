@@ -1,0 +1,54 @@
+{
+ "examples": [
+  {
+   "key": "backtest_0908",
+   "group": "backtest_0908",
+   "ext": false,
+   "label": "예시 · 백테스트 (실제 실행 계획)",
+   "start": "2021-09-08",
+   "source": "example",
+   "allow_new": false,
+   "max_move_share": 0.5
+  },
+  {
+   "key": "backtest_0908_ext",
+   "group": "backtest_0908",
+   "ext": true,
+   "label": "예시 · 백테스트 (실제 실행 계획)",
+   "start": "2021-09-08",
+   "source": "example",
+   "allow_new": true,
+   "max_move_share": 0.8
+  },
+  {
+   "key": "week_0915",
+   "group": "week_0915",
+   "ext": false,
+   "label": "예시 · 다음 주 (평소 일정 계획)",
+   "start": "2021-09-15",
+   "source": "example",
+   "allow_new": false,
+   "max_move_share": 0.5
+  },
+  {
+   "key": "week_0915_ext",
+   "group": "week_0915",
+   "ext": true,
+   "label": "예시 · 다음 주 (평소 일정 계획)",
+   "start": "2021-09-15",
+   "source": "example",
+   "allow_new": true,
+   "max_move_share": 0.8
+  }
+ ],
+ "modes": {
+  "base": {
+   "allow_new": false,
+   "max_move_share": 0.5
+  },
+  "ext": {
+   "allow_new": true,
+   "max_move_share": 0.8
+  }
+ }
+}
