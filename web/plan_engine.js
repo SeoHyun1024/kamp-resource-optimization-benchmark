@@ -184,7 +184,15 @@
       async function evaluate(cands) {
         if (!cands.length) return false;
         const days = [...new Set(cands.flatMap((c) => c.days))].sort((a, b) => a - b);
-        const rows = days.flatMap((d) => dayIdx[d]);
+        // plan_on_prev·plan_on_next·plan_prod_roll3은 자정을 넘어 옆 날의 한 시각을 보므로
+        // 바뀐 날의 바로 앞 시각(전날 23시)과 바로 뒤 시각(다음 날 0시)도 다시 예측한다 (14_plan_advisor.predict_days와 같음)
+        const rowSet = new Set();
+        for (const d of days) {
+          for (const i of dayIdx[d]) rowSet.add(i);
+          if (d > 0) rowSet.add(d * 24 - 1);
+          if (d < nd - 1) rowSet.add((d + 1) * 24);
+        }
+        const rows = [...rowSet].sort((a, b) => a - b);
         let best = -1, bestGain = -Infinity, bestPred = null;
         for (let k = 0; k < cands.length; k++) {
           const c = cands[k];

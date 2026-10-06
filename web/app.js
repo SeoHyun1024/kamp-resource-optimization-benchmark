@@ -844,7 +844,8 @@
   // ── 계획 직접 편집 (web/plan_engine.js: 14_plan_advisor.py 와 같은 예측·수정안을 브라우저에서) ──
   const EDITORS = (PA && PA.editor) || [];
   const isEdit = () => !!S.pweek && EDITORS.some((e) => e.key === S.pweek);
-  const ED = { engine: null, loading: null, key: null, on: null, prod: null, res: null, resExt: null, view: null, busy: false, paint: null };
+  // ver: 계획이 바뀔 때마다 1씩 오른다. 수정안 계산 중에 계획이 바뀌었는지 확인하는 데 쓴다
+  const ED = { engine: null, loading: null, key: null, on: null, prod: null, res: null, resExt: null, view: null, busy: false, paint: null, ver: 0 };
 
   function loadScript(src) {
     return new Promise((resolve, reject) => {
@@ -868,7 +869,7 @@
   const edStatus = (msg) => { $('#pe-status').innerHTML = msg; };
 
   function openEditor(key) {
-    ED.key = key; ED.res = null;
+    ED.key = key; ED.res = null; ED.ver++;
     const t = tpl();
     ED.on = t.on.slice(); ED.prod = t.production.slice();
     if (S.shareEdit && S.shareEdit.k === key) {          // 공유 링크로 열었으면 그 계획
@@ -941,7 +942,7 @@
   }
 
   function edChanged(msg) {
-    ED.res = null;
+    ED.res = null; ED.ver++;
     saveDraft();
     edCompute(); renderGrid(); renderPlanBody();
     if (msg) edStatus(msg);
@@ -970,7 +971,7 @@
   }
   function toggleCell(i, val) {
     const t = tpl();
-    ED.on[i] = val;
+    ED.on[i] = val; ED.ver++;
     if (val === 1 && !(ED.prod[i] > 0)) ED.prod[i] = t.on[i] ? t.production[i] : 0;
   }
 
@@ -1032,15 +1033,22 @@
       const btns = ['#pe-suggest', '#pe-apply', '#pe-reset', '#pe-file'].map((s) => $(s));
       btns.forEach((b) => { b.disabled = true; });
       edStatus('수정안을 계산하고 있어요… (후보마다 모델로 다시 예측해서 몇 초 걸려요)');
-      const mode = PA.modes[S.pext ? 'ext' : 'base'], t0 = performance.now();
+      // 계산을 시작한 시점의 계획·주·모드를 기억해 두고, 끝났을 때 그사이 바뀌었으면 결과를 버린다
+      const ver = ED.ver, key = ED.key, ext = S.pext;
+      const mode = PA.modes[ext ? 'ext' : 'base'], t0 = performance.now();
       try {
         const prodNow = ED.prod.map((v, i) => (ED.on[i] ? v : 0));
-        ED.res = await ED.engine.search(ED.key, ED.on, prodNow, {
+        const res = await ED.engine.search(key, ED.on.slice(), prodNow, {
           allowNew: mode.allow_new, maxMoveShare: mode.max_move_share,
           yield: () => new Promise((r) => setTimeout(r, 0)),
           onProgress: (p) => edStatus(`수정안을 계산하고 있어요… 후보 ${p.evals.toLocaleString('ko-KR')}개 평가, 이동 ${p.moves}건 채택`),
         });
-        ED.resExt = S.pext;
+        if (ED.ver !== ver || ED.key !== key) {
+          edStatus('계산하는 동안 계획이 바뀌어서 이 수정안은 쓰지 않았어요. 다시 "수정안 만들기"를 눌러 주세요.');
+          return;
+        }
+        ED.res = res;
+        ED.resExt = ext;                                  // 계산에 쓴 모드 (지금 모드와 다르면 edCompute가 수정안을 쓰지 않음)
         edCompute(); renderGrid(); renderPlanBody();
         const s = ED.view.summary;
         edStatus(ED.res.moves.length
@@ -1051,7 +1059,7 @@
       } finally {
         ED.busy = false;
         btns.forEach((b) => { b.disabled = false; });
-        $('#pe-apply').disabled = !(ED.res && ED.res.moves.length);
+        $('#pe-apply').disabled = !(ED.res && ED.resExt === S.pext && ED.res.moves.length);
       }
     };
     $('#pe-apply').onclick = () => {

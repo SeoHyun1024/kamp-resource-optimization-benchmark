@@ -120,6 +120,9 @@ def check_window(ctx: Context, plan: pd.DataFrame) -> None:
     if start - last_known > pd.Timedelta(hours=1):
         raise ValueError(f"계획 시작 {start:%Y-%m-%d} 직전까지의 실제 전력이 필요합니다. "
                          f"데이터는 {last_known:%Y-%m-%d %H}시에서 끝납니다.")
+    if ctx.backtest and end > ctx.data_end:
+        raise ValueError(f"백테스트 계획은 실제 전력이 있는 {ctx.data_end:%Y-%m-%d}까지만 넣어 주세요. "
+                         f"현재 계획은 {end:%Y-%m-%d}까지라 실제 전력이 없는 날을 비교할 수 없습니다.")
     if ctx.history.index.min() > start - pd.Timedelta(hours=pt.WEEK_LAGS[-1]):
         raise ValueError("계획 시작 전 3주치 전력이 필요합니다.")
 
@@ -142,10 +145,13 @@ def predict_many(ctx: Context, base: pd.DataFrame, plans: list[pd.DataFrame]) ->
 
 def predict_days(ctx: Context, base: pd.DataFrame, plans: list[pd.DataFrame], days: list):
     """후보 계획마다 영향받는 날(days)만 다시 예측한다. 계획 feature는 날 단위로 계산되고 날 경계에서만
-    앞뒤 시각을 보므로, 앞뒤 하루를 붙여 계산한 뒤 해당 날만 잘라 쓴다 (전체 예측과 같은 값인지 assert로 확인)."""
+    앞뒤 시각을 보므로, 앞뒤 하루를 붙여 계산한 뒤 해당 날만 잘라 쓴다 (전체 예측과 같은 값인지 assert로 확인).
+    plan_on_prev·plan_on_next·plan_prod_roll3은 자정을 넘어 옆 날의 한 시각을 보므로, 바뀐 날의 바로 앞 시각
+    (전날 23시)과 바로 뒤 시각(다음 날 0시)도 함께 다시 예측한다."""
     t = base.index
     day = t.normalize()
-    keep = day.isin(days)
+    hour = pd.Timedelta(hours=1)
+    keep = day.isin(days) | (t + hour).normalize().isin(days) | (t - hour).normalize().isin(days)
     ctx_mask = day.isin([d + pd.Timedelta(days=k) for d in days for k in (-1, 0, 1)])
     rows = [pd.concat([base.loc[keep], pt.plan_features(p.loc[ctx_mask]).loc[t[keep]]], axis=1)[ctx.feats]
             for p in plans]
@@ -501,7 +507,8 @@ def advise(path: str, same_day_only=False, allow_new=False, max_move_share=0.5, 
     base = pt.week_features(ctx.history["power"], ctx.history, plan.index)
     assert base.notna().all().all(), "1주 전 feature에 빈 값이 있습니다."
     pred0 = predict_many(ctx, base, [plan])[0]
-    part, rows = predict_days(ctx, base, [plan], sorted(set(plan.index.normalize()))[1:3])
+    days = sorted(set(plan.index.normalize()))
+    part, rows = predict_days(ctx, base, [plan], days[1:3] or days)   # 하루짜리 계획은 그날로 점검
     assert np.allclose(part[0], pred0[rows]), "날 단위 부분 예측이 전체 예측과 다릅니다."
     revised, pred1, moves = search(ctx, plan, base, same_day_only, allow_new, max_move_share, window)
     assert np.allclose(predict_many(ctx, base, [revised])[0], pred1), "탐색 중 예측과 최종 예측이 다릅니다."
