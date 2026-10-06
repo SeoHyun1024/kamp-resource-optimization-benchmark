@@ -43,6 +43,8 @@
     pweek: null,  // 주간 계획 탭의 '주' (group). initPlan에서 정함
     aweek: 0,     // 관리자 탭 주간 피드백의 주 (index). initWeeks 전에 마지막 주로 맞춤
     pext: false,
+    showMove: store.get('showMove') === '1',  // 하루 그래프: 부하 이동 경로 겹쳐 보기
+    showHs: store.get('showHs') === '1',      // 하루 그래프: 사후 최선 겹쳐 보기
   };
   if (D.weeks) {   // 주간 피드백이 있으면 마지막 주, 그 주에서 피크가 가장 많은 날로 시작
     S.aweek = D.weeks.length - 1;
@@ -92,6 +94,11 @@
   const live = (msg) => { $('#live').textContent = msg; };
   const acc = (title, body, open) => `<details class="acc"${open ? ' open' : ''}><summary>${title}</summary><div class="acc-body">${body}</div></details>`;
   const REDUCE = matchMedia('(prefers-reduced-motion: reduce)').matches;
+  // 가로로 스크롤되는 날짜 버튼 줄에서 고른 날이 보이게 (페이지 세로 스크롤은 건드리지 않음)
+  const showPressed = (row) => {
+    const b = $('[aria-pressed="true"]', row);
+    if (b && row.scrollWidth > row.clientWidth) row.scrollLeft = b.offsetLeft - row.offsetLeft - (row.clientWidth - b.offsetWidth) / 2;
+  };
   const ease = (t) => 1 - Math.pow(1 - t, 3);
   // 숫자가 시작값에서 최종값까지 올라가거나 내려가는 효과 (동작 줄이기 설정이면 바로 최종값)
   function countUp(root) {
@@ -174,28 +181,45 @@
   function chartSVG(d, anim) {
     const { raw, adj } = stats(d);
     const HALO = 'paint-order:stroke;stroke:var(--surface);stroke-width:4px;stroke-linejoin:round';
-    const W = 760, H = 300, L = 46, R = 14, Tp = 16, B = 30;
+    const W = 760, H = 290, L = 46, R = 14, Tp = 16, B = 44;
     const iw = W - L - R, ih = H - Tp - B;
-    const ymax = Math.max(220, Math.ceil((maxOf(raw.actual.concat([T])) + 10) / 20) * 20);
-    const x = (h) => L + (iw * h) / 23, y = (v) => Tp + ih * (1 - v / ymax), bw = iw / 23;
+    // y축은 그날 값 근처만 보여 준다 (0부터 그리면 변경 전·후 선이 위쪽에 붙어 차이가 안 보임)
+    const hs0 = S.showHs ? hsOf(d) : null;
+    const all = raw.actual.concat(adj.actual_after, hs0 ? hs0.actual_after : [], [T]);
+    const ymax = Math.ceil((maxOf(all) + 8) / 10) * 10;
+    const ymin = Math.max(0, Math.floor((Math.min.apply(null, all) - 10) / 25) * 25);
+    const ystep = ymax - ymin > 120 ? 50 : 25;
+    const x = (h) => L + (iw * h) / 23, y = (v) => Tp + ih * (1 - (v - ymin) / (ymax - ymin)), bw = iw / 23;
     const pathOf = (arr) => arr.map((v, h) => `${h ? 'L' : 'M'}${x(h).toFixed(1)},${y(v).toFixed(1)}`).join('');
     const c = (name) => (anim ? ` class="${name}"` : '');
     const dl = (sec) => (anim ? `;animation-delay:${sec}s` : '');
     let s = `<svg viewBox="0 0 ${W} ${H}" role="img" aria-label="${md(d)} 시간별 전력. 변경 전 최대 ${fmt(maxOf(raw.actual), 0)}kW, 변경 후 최대 ${fmt(maxOf(adj.actual_after), 0)}kW. 표로 보기에서 자세한 값을 볼 수 있습니다.">`;
-    for (let v = 0; v <= ymax; v += 50) {
+    s += `<defs><clipPath id="over-t"><rect x="${L}" y="${Tp}" width="${iw}" height="${Math.max(0, y(T) - Tp)}"/></clipPath></defs>`;
+    for (let v = Math.ceil(ymin / ystep) * ystep; v <= ymax; v += ystep) {
       s += `<line class="grid" x1="${L}" x2="${W - R}" y1="${y(v)}" y2="${y(v)}"/><text x="${L - 6}" y="${y(v) + 4}" text-anchor="end">${v}</text>`;
     }
-    for (let h = 0; h < 24; h++) {
-      if (adj.out[h] > 0) s += `<rect${c('fade')} x="${x(h) - bw / 2}" y="${Tp}" width="${bw}" height="${ih}" style="fill:var(--out-bg)${dl(1.0)}"/>`;
-      if (adj.in[h] > 0) s += `<rect${c('fade')} x="${x(h) - bw / 2}" y="${Tp}" width="${bw}" height="${ih}" style="fill:var(--in-bg)${dl(1.0)}"/>`;
+    // 부하 이동 경로를 켜면 덜어내는/받는 시간을 그래프 전체 높이로 칠한다
+    if (S.showMove) {
+      for (let h = 0; h < 24; h++) {
+        if (adj.out[h] > 0) s += `<rect${c('fade')} x="${x(h) - bw / 2}" y="${Tp}" width="${bw}" height="${ih}" style="fill:var(--out-bg)${dl(1.0)}"/>`;
+        if (adj.in[h] > 0) s += `<rect${c('fade')} x="${x(h) - bw / 2}" y="${Tp}" width="${bw}" height="${ih}" style="fill:var(--in-bg)${dl(1.0)}"/>`;
+      }
     }
-    for (let h = 0; h < 24; h += 3) s += `<text x="${x(h)}" y="${H - 10}" text-anchor="middle">${pad(h)}시</text>`;
+    // x축 바로 아래 띠: 덜어낸 시간(주황) / 받은 시간(파랑)
+    const sy = Tp + ih + 4;
+    for (let h = 0; h < 24; h++) {
+      const col = adj.out[h] > 0 ? 'var(--orange)' : adj.in[h] > 0 ? 'var(--blue)' : null;
+      if (col) s += `<rect${c('fade')} x="${x(h) - bw / 2 + 1}" y="${sy}" width="${bw - 2}" height="6" rx="2" style="fill:${col}${dl(1.0)}"><title>${hh(h)} ${adj.out[h] > 0 ? '덜어냄 −' + fmt(adj.out[h]) : '받음 +' + fmt(adj.in[h])}kW</title></rect>`;
+    }
+    for (let h = 0; h < 24; h += 3) s += `<text x="${x(h)}" y="${H - 8}" text-anchor="middle">${pad(h)}시</text>`;
     s += `<text class="axis-label" x="${L - 6}" y="10" text-anchor="end">kW</text>`;
+    // 피크 기준을 넘은 부분(변경 전)을 주황으로 칠해 '어디가 문제였는지'를 먼저 보이게 한다
+    s += `<path${c('fade')} clip-path="url(#over-t)" d="${pathOf(raw.actual)}L${x(23)},${y(ymin)}L${x(0)},${y(ymin)}Z" style="fill:var(--orange);opacity:.22${dl(0.8)}"/>`;
     s += `<line x1="${L}" x2="${W - R}" y1="${y(T)}" y2="${y(T)}" style="stroke:var(--text-3)" stroke-width="1.2" stroke-dasharray="5 4"/>`;
-    s += `<text style="${HALO}" x="${W - R}" y="${y(T) - 5}" text-anchor="end">피크 기준 ${fmt(T, 0)}kW</text>`;
-    // 부하 이동 경로: 덜어낸 시간에서 받는 시간으로 호를 그리고 점이 따라간다 (그래프 아래쪽 빈 공간 사용)
-    const y0 = y(0) - 6;
-    adj.transfers.forEach((t, i) => {
+    s += `<text style="${HALO}" x="${W - R}" y="${y(T) + 15}" text-anchor="end">피크 기준 ${fmt(T, 0)}kW</text>`;
+    // 부하 이동 경로: 덜어낸 시간에서 받는 시간으로 호를 그리고 점이 따라간다 (그래프 아래쪽에서)
+    const y0 = Tp + ih - 2;
+    if (S.showMove) adj.transfers.forEach((t, i) => {
       const x1 = x(t.from), x2 = x(t.to), yc = y0 - Math.min(70, 14 + Math.abs(x2 - x1) * 0.22);
       const dd = `M${x1.toFixed(1)},${y0} Q${((x1 + x2) / 2).toFixed(1)},${yc.toFixed(1)} ${x2.toFixed(1)},${y0}`;
       const delay = (0.5 + i * 0.08).toFixed(2);
@@ -204,10 +228,10 @@
         s += `<circle class="mv" r="3.5" style="fill:var(--text);animation-delay:${delay}s"><animateMotion dur="1s" begin="${delay}s" fill="freeze" path="${dd}"/></circle>`;
       }
     });
-    s += `<path${c('draw')} pathLength="1" d="${pathOf(raw.actual)}" fill="none" style="stroke:var(--orange)" stroke-width="2" stroke-linejoin="round" stroke-linecap="round"/>`;
-    const hsD = hsOf(d);
-    if (hsD) s += `<path${c('fade')} d="${pathOf(hsD.actual_after)}" fill="none" style="stroke:var(--text-3)${dl(2.4)}" stroke-width="1.6" stroke-dasharray="5 4"/>`;
-    s += `<path id="p-after"${c('draw')} pathLength="1" d="${pathOf(anim ? raw.actual : adj.actual_after)}" fill="none" style="stroke:var(--blue)" stroke-width="2" stroke-linejoin="round" stroke-linecap="round"/>`;
+    s += `<path${c('draw')} pathLength="1" d="${pathOf(raw.actual)}" fill="none" style="stroke:var(--orange)" stroke-width="2.5" stroke-linejoin="round" stroke-linecap="round"/>`;
+    const hsD = hs0;
+    if (hsD) s +=`<path${c('fade')} d="${pathOf(hsD.actual_after)}" fill="none" style="stroke:var(--text-3)${dl(2.4)}" stroke-width="1.6" stroke-dasharray="5 4"/>`;
+    s += `<path id="p-after"${c('draw')} pathLength="1" d="${pathOf(anim ? raw.actual : adj.actual_after)}" fill="none" style="stroke:var(--blue)" stroke-width="2.75" stroke-linejoin="round" stroke-linecap="round"/>`;
     raw.actual.forEach((v, h) => { if (v >= T) s += `<circle${c('fade')} cx="${x(h)}" cy="${y(v)}" r="4" style="fill:var(--orange);stroke:var(--surface)${dl(0.8)}" stroke-width="2"/>`; });
     const bi = raw.actual.indexOf(maxOf(raw.actual)), ai = adj.actual_after.indexOf(maxOf(adj.actual_after));
     if (maxOf(raw.actual) >= T) {
@@ -224,15 +248,21 @@
 
   let chartRaf = 0, chartIO = null;
   function renderChart() {
-    const d = S.date, { raw, adj, bMax, aMax, bPeak, aPeak } = stats(d);
-    $('#a-day-summary').innerHTML = `<b>${md(d)}</b> · ${raw.day_type} · 최대 전력 ${fmt(bMax, 0)}kW → <b>${fmt(aMax, 0)}kW</b> · 피크 시간 ${bPeak} → <b>${aPeak}</b>시간`;
+    const d = S.date, { raw, adj, bMax, aMax, bPeak, aPeak, moved } = stats(d);
+    $('#a-day-summary').innerHTML = `
+      <div class="stat"><span class="k">${md(d)}</span><span class="v">${raw.day_type}</span></div>
+      <div class="stat"><span class="k">최대 전력</span><span class="v">${fmt(bMax, 0)} → <b>${fmt(aMax, 0)}</b>kW ${badge(bMax - aMax, 'kW')}</span></div>
+      <div class="stat"><span class="k">피크 시간</span><span class="v">${bPeak} → <b>${aPeak}</b>시간 ${badge(bPeak - aPeak, '시간')}</span></div>
+      <div class="stat"><span class="k">옮긴 부하</span><span class="v"><b>${fmt(moved, 0)}</b>kW</span></div>`;
+    $('#a-show-hs-wrap').hidden = !hsOf(d);
     $('#a-legend').innerHTML = `
-      <span><i class="sw" style="background:var(--orange)"></i>변경 전 (실제 전력)</span>
+      <span><i class="sw" style="background:var(--orange)"></i>변경 전 (실제)</span>
       <span><i class="sw" style="background:var(--blue)"></i>변경 후 (AI 계획 적용)</span>
-      <span><i class="band" style="background:var(--out-bg);border:1px solid var(--line)"></i>부하를 덜어내는 시간</span>
-      <span><i class="band" style="background:var(--in-bg);border:1px solid var(--line)"></i>부하를 받는 시간</span>
-      <span><i class="sw" style="background:var(--text-3);height:2px"></i>부하 이동 경로</span>
-      ${hsOf(S.date) ? '<span><i class="sw" style="background:var(--text-3)"></i>사후 최선 (점선, 예측이 완벽했다면)</span>' : ''}`;
+      <span><i class="band" style="background:var(--orange);opacity:.3"></i>피크 기준 초과</span>
+      <span><i class="tick" style="background:var(--orange)"></i>덜어낸 시간</span>
+      <span><i class="tick" style="background:var(--blue)"></i>받은 시간</span>
+      ${S.showMove ? '<span><i class="sw" style="background:var(--text-3);height:2px"></i>부하 이동 경로</span>' : ''}
+      ${S.showHs && hsOf(d) ? '<span><i class="sw dash"></i>사후 최선 (예측이 완벽했다면)</span>' : ''}`;
     cancelAnimationFrame(chartRaf);
     if (chartIO) chartIO.disconnect();
     const anim = !REDUCE;
@@ -327,15 +357,14 @@
       const dests = src[h];
       const destText = dests.map((t) => `${hh(t.to)}에 ${fmt(t.kw)}kW`).join(', ');
       const first = dests[0].to;
-      return `<div class="change" style="--i:${idx}">
-        <div class="change-head"><span class="when">${hh(h)} 부하 → ${rangeText(dests.map((t) => t.to))}</span>
-          <span class="pill out">−${fmt(adj.out[h])}kW 덜어냄</span><span class="pill in">${destText}</span></div>
-        <div class="ba">
-          <div><div class="t">${hh(h)} 예측 전력 (변경 전 → 후)</div><div class="v">${fmt(raw.pred[h], 0)} → ${fmt(adj.pred_after[h], 0)}kW</div></div>
-          <div class="arr">⇄</div>
-          <div><div class="t">${hh(first)} 예측 전력 (변경 전 → 후)</div><div class="v">${fmt(raw.pred[first], 0)} → ${fmt(adj.pred_after[first], 0)}kW</div></div>
-        </div>
-        ${acc('왜 옮기나요? 자세히 보기', `<p class="why">${reasonText(d, h)}</p>`)}</div>`;
+      // 한 줄 = 옮기는 한 건. 누르면 이유가 펼쳐진다
+      return `<details class="change" style="--i:${idx}"><summary class="change-row">
+          <span class="when">${hh(h)} <span class="to">→ ${rangeText(dests.map((t) => t.to))}</span></span>
+          <span class="pill out">−${fmt(adj.out[h])}kW</span>
+          <span class="mv-pred"><span class="t">${hh(h)} 예측</span> ${fmt(raw.pred[h], 0)} → <b>${fmt(adj.pred_after[h], 0)}</b></span>
+          <span class="mv-pred"><span class="t">${hh(first)} 예측</span> ${fmt(raw.pred[first], 0)} → <b>${fmt(adj.pred_after[first], 0)}</b>kW</span>
+          <span class="why-btn">왜?</span></summary>
+        <p class="why">${reasonText(d, h)}${dests.length > 1 ? ` 받는 시간: ${destText}.` : ''}</p></details>`;
     }).join('');
   }
 
@@ -417,39 +446,44 @@
     $('#a-prev').disabled = S.aweek === 0;
     $('#a-next').disabled = S.aweek === WK.length - 1;
     const ex = w.excluded_days.length ? ` ${w.excluded_days.map(md).join(', ')}은 다른 날짜를 복사한 '복제일'이라 지표에서 뺐어요.` : '';
-    $('#a-week-lead').innerHTML = `<b>${wkLabel(w)}</b>을 <b>${md(w.train_until)}까지</b>의 데이터(${w.train_rows.toLocaleString('ko-KR')}시간)로 다시 학습한 모델로 하루 전에 예측하고, 일정 조정안을 실제 전력에 적용해 봤어요.${prev ? ` 지난주보다 학습 데이터가 ${(w.train_rows - prev.train_rows).toLocaleString('ko-KR')}시간 늘었어요.` : ''}${ex}`;
+    // 한 줄 결론을 맨 위에, 학습 조건 설명은 접어 둔다
+    const a = wkSc().ai, h = wkSc().hs;
+    const pct = a.peak_hours_actual ? Math.round((1 - a.peak_hours / a.peak_hours_actual) * 100) : 0;
+    $('#a-headline').innerHTML = a.peak_hours_actual
+      ? `AI 계획으로 피크 시간이 <span class="hl">${pct}% 줄었어요</span> <span class="sub">${a.peak_hours_actual} → ${a.peak_hours}시간 · 예측이 완벽했다면 ${h.peak_hours}시간</span>`
+      : '이번 주는 피크 시간이 없었어요';
+    $('#a-week-lead').innerHTML = acc(`${md(w.train_until)}까지 학습한 모델로 예측 · 어떻게 계산했나요?`,
+      `<p>${wkLabel(w)}을 ${md(w.train_until)}까지의 데이터(${w.train_rows.toLocaleString('ko-KR')}시간)로 다시 학습한 모델로 하루 전에 예측하고, 일정 조정안을 실제 전력에 적용해 봤어요.${prev ? ` 지난주보다 학습 데이터가 ${(w.train_rows - prev.train_rows).toLocaleString('ko-KR')}시간 늘었어요.` : ''}${ex}</p>`);
   }
 
   function renderWeekKpis(animate = true) {
-    const w = wk(), s = wkSc(), a = s.ai, h = s.hs, prev = WK[S.aweek - 1];
+    const s = wkSc(), a = s.ai, h = s.hs;
     const cutAi = a.week_max_actual - a.week_max, cutHs = a.week_max_actual - h.week_max;
-    const dMae = prev ? w.m3.mae - prev.m3.mae : null;
+    // 핵심 3개만: 요금 기준 최대수요 · 피크 시간 · 월 절감액 (예측 오차는 아래 '주별 추이'에서)
     $('#kpis').innerHTML = `
-      <div class="kpi"><div class="label">주간 최대수요 (요금 기준)</div>
-        <div class="value"><span class="from">${fmt(a.week_max_actual)}</span><span class="arrow">→</span><span class="cu" data-from="${a.week_max_actual}" data-to="${a.week_max}" data-dec="1">${fmt(a.week_max)}</span><span class="from">kW</span></div>
-        <div class="delta">AI 계획 ${cutAi > 0.05 ? '−' + fmt(cutAi) + 'kW' : '변화 없음'}</div>
-        <div class="trio">사후 최선 <b>${fmt(h.week_max)}kW</b> · 놓친 몫 ${fmt(Math.max(0, a.week_max - h.week_max))}kW</div></div>
-      <div class="kpi"><div class="label">피크 시간 (${T}kW 이상)</div>
-        <div class="value"><span class="from">${a.peak_hours_actual}</span><span class="arrow">→</span><span class="cu" data-from="${a.peak_hours_actual}" data-to="${a.peak_hours}" data-dec="0">${a.peak_hours}</span><span class="from">시간</span></div>
-        <div class="delta">AI 계획 ${a.peak_hours_actual ? Math.round((1 - a.peak_hours / a.peak_hours_actual) * 100) : 0}% 감소</div>
-        <div class="trio">사후 최선 <b>${h.peak_hours}시간</b> · 당일 경보(M2)가 실제 피크 ${w.m2.peaks}시간 중 ${w.m2.caught}시간 잡음</div></div>
-      <div class="kpi"><div class="label">하루 전 예측 오차 (MAE)</div>
-        <div class="value"><span class="cu" data-from="${prev ? prev.m3.mae : w.m3.mae}" data-to="${w.m3.mae}" data-dec="1">${fmt(w.m3.mae)}</span><span class="from">kW</span></div>
-        <div class="delta">${dMae === null ? '첫 주' : `지난주 대비 ${dMae <= 0 ? '−' : '+'}${fmt(Math.abs(dMae))}kW`}</div>
-        <div class="trio">가동일 일 최대 ${w.m3.daily_max_bias === null ? '-' : `<b>${w.m3.daily_max_bias < 0 ? '' : '+'}${fmt(w.m3.daily_max_bias)}kW</b> ${w.m3.daily_max_bias < 0 ? '낮게' : '높게'} 예측`}</div></div>
+      <div class="kpi"><div class="label">피크 시간 <span class="unit">${T}kW 이상</span></div>
+        <div class="value"><span class="cu" data-from="${a.peak_hours_actual}" data-to="${a.peak_hours}" data-dec="0">${a.peak_hours}</span><span class="u">시간</span></div>
+        <div class="was">실제 ${a.peak_hours_actual}시간에서 ${badge(a.peak_hours_actual - a.peak_hours, '시간')}</div>
+        <div class="foot">예측이 완벽했다면 ${h.peak_hours}시간</div></div>
+      <div class="kpi"><div class="label">주간 최대수요 <span class="unit">요금 기준</span></div>
+        <div class="value"><span class="cu" data-from="${a.week_max_actual}" data-to="${a.week_max}" data-dec="1">${fmt(a.week_max)}</span><span class="u">kW</span></div>
+        <div class="was">실제 ${fmt(a.week_max_actual)}kW에서 ${badge(cutAi, 'kW', 1)}</div>
+        <div class="foot">예측이 완벽했다면 ${fmt(h.week_max)}kW</div></div>
       <div class="kpi"><div class="label">기본요금 절감 ${tariffTag()}</div>
-        <div class="value"><span class="cu" data-from="0" data-to="${Math.round(Math.max(0, cutAi) * S.price)}" data-dec="0" data-suf="원">${won(Math.max(0, cutAi) * S.price)}</span><span class="from">/월</span></div>
-        <div class="delta">AI 계획 기준</div>
-        <div class="trio">사후 최선이면 월 <b>${won(Math.max(0, cutHs) * S.price)}</b></div><div class="foot">${tariffFoot('최대수요 절감')}</div></div>`;
+        <div class="value"><span class="cu" data-from="0" data-to="${Math.round(Math.max(0, cutAi) * S.price)}" data-dec="0">${fmt(Math.round(Math.max(0, cutAi) * S.price), 0)}</span><span class="u">원/월</span></div>
+        <div class="was">예측이 완벽했다면 월 ${won(Math.max(0, cutHs) * S.price)}</div>
+        <div class="foot" title="${tariffFoot('최대수요 절감')}">12개월 유지 시 추정</div></div>`;
     if (animate) countUp($('#kpis'));
   }
+  // 줄어든 양 표시: 줄면 파랑 '−n', 늘면 주황 '+n', 그대로면 회색
+  const badge = (cut, unit, dec = 0) => (Math.abs(cut) < (dec ? 0.05 : 0.5)
+    ? '<span class="badge same">변화 없음</span>'
+    : `<span class="badge ${cut > 0 ? 'down' : 'up'}">${cut > 0 ? '−' : '+'}${fmt(Math.abs(cut), dec)}${unit}</span>`);
 
   function renderWeekCallout() {
-    const w = wk(), s = wkSc();
-    const gap = Math.max(0, s.ai.peak_hours - s.hs.peak_hours);
-    const lead = `<strong>이번 주 피드백:</strong> AI 계획으로 피크 시간이 ${s.ai.peak_hours_actual} → ${s.ai.peak_hours}시간이 됐고, 예측이 완벽했다면 ${s.hs.peak_hours}시간까지 가능했어요${gap ? ` (예측 오차로 ${gap}시간 놓침)` : ''}.`;
+    const w = wk();
     const notes = w.notes.length ? `<ul>${w.notes.map((n) => `<li>${n}</li>`).join('')}</ul>` : '<p>이번 주는 특별히 반영할 점이 없어요.</p>';
-    $('#callout').innerHTML = `<p class="lead">${lead}</p>` + acc('다음 주에 반영할 점', notes, true);
+    $('#callout').innerHTML = `<p class="lead"><strong>다음 주에 반영할 점</strong></p>${notes}`;
   }
 
   function trendChart(el, series, ytitle, fmtv) {
@@ -487,6 +521,8 @@
       { name: 'AI 계획', v: ai, color: 'var(--blue)' },
       { name: '사후 최선', v: hs, color: 'var(--text-3)', dash: true },
     ], '주간 최대수요', (v) => fmt(v) + 'kW');
+    const w = wk(), prev = WK[S.aweek - 1], dMae = prev ? w.m3.mae - prev.m3.mae : null;
+    $('#a-trend-mae-title').innerHTML = `하루 전 예측 오차 MAE (kW) · 이번 주 <b>${fmt(w.m3.mae)}</b>${dMae === null ? '' : ` (지난주 대비 ${dMae <= 0 ? '−' : '+'}${fmt(Math.abs(dMae))})`}`;
     trendChart($('#a-trend-mae'), [{ name: 'MAE', v: WK.map((w) => w.m3.mae), color: 'var(--blue)' }], '하루 전 예측 오차', (v) => fmt(v, 2) + 'kW');
     $('#a-trend-table').innerHTML = `<table><thead><tr><th>주</th><th>학습 데이터</th><th class="num">MAE</th><th class="num">최대수요 실제 / AI / 사후</th><th class="num">피크 시간 실제 / AI / 사후</th><th class="num">M2 경보</th></tr></thead><tbody>${WK.map((w, i) => {
       const s = w.scenarios[k];
@@ -512,10 +548,23 @@
     });
   }
 
+  // 날짜 고르기: 드롭다운 대신 그 주 날짜를 버튼으로 펼쳐 피크가 있던 날이 바로 보이게 한다
+  function renderDayPick() {
+    const ds = weekDays();
+    $('#a-days-pick').innerHTML = ds.map((d) => {
+      const p = peakHoursOf(d);
+      return `<button type="button" class="day-chip${p ? ' has-peak' : ''}" data-d="${d}" aria-pressed="${d === S.date}">
+        <span class="dd">${md(d)}</span><span class="pk">${p ? `피크 ${p}시간` : '피크 없음'}</span></button>`;
+    }).join('');
+    $('#a-days-pick').querySelectorAll('.day-chip').forEach((b) => {
+      b.onclick = () => { S.date = b.dataset.d; renderAdmin(); };
+    });
+    showPressed($('#a-days-pick'));
+  }
+
   function renderAdmin() {
     if (WK && !weekDays().includes(S.date)) S.aweek = wkOf(S.date);   // 다른 화면에서 날짜를 바꿨으면 그 주로
-    $('#a-date').innerHTML = weekDays().map((d) => `<option value="${d}">${md(d)}${peakHoursOf(d) ? ' · 피크 ' + peakHoursOf(d) + '시간' : ''}</option>`).join('');
-    $('#a-date').value = S.date;
+    renderDayPick();
     if (WK) { renderWeekHead(); renderWeekKpis(); renderWeekCallout(); renderTrend(); renderChart(); renderChanges(); renderWeekDays(); renderMethod(); return; }
     renderKpis(); renderCallout(); renderChart(); renderChanges(); renderDays(); renderMethod();
   }
@@ -543,84 +592,144 @@
     return out;
   }
   const NAME = { out: '고부하 작업 자제', in: '집중 배치', normal: '일반 가동', off: '비가동' };
+  const hrs = (s, e) => `${pad(s)}–${pad(e + 1)}시`;
+  const outRuns = (d) => (D.days[d] ? runs(d).filter((r) => r.st === 'out') : []);
+  const wDays = (i = S.week) => Array.from({ length: 7 }, (_, k) => addDays(weeks[i], k));
+  // 고른 블록과 짝이 되는 시간: 덜어내는 블록이면 받는 시간, 받는 블록이면 덜어내는 시간
+  function pairHours(r) {
+    const adj = adjOf(r.d), set = new Set();
+    adj.transfers.forEach((t) => {
+      if (r.st === 'out' && t.from >= r.s && t.from <= r.e) set.add(t.to);
+      if (r.st === 'in' && t.to >= r.s && t.to <= r.e) set.add(t.from);
+    });
+    return set;
+  }
+  const runOf = (sel) => (sel && D.days[sel.d] ? runs(sel.d).find((r) => r.s === sel.s) : null);
+  const biggest = (rs) => rs.reduce((a, r) => (!a || r.kw > a.kw ? r : a), null);
 
   function renderWorker() {
-    const mon = weeks[S.week];
+    const mon = weeks[S.week], days7 = wDays();
+    // 선택이 없거나 다른 주면: 고른 날(없으면 그 주에서 가장 큰 작업이 있는 날)의 가장 큰 작업
+    if (!days7.includes(S.date) || !D.days[S.date]) {
+      const best = biggest(days7.flatMap(outRuns));
+      S.date = best ? best.d : days7.find((d) => D.days[d]) || S.date;
+    }
+    const folded = S.detail && S.detail.s === -1 && S.detail.d === S.date;   // 할 일 목록에서 접은 상태
+    if (S.detail && !folded && (S.detail.d !== S.date || !runOf(S.detail))) S.detail = null;
+    if (!S.detail) { const b = biggest(outRuns(S.date)); S.detail = b ? { d: b.d, s: b.s, e: b.e } : null; }
+    const cur = runOf(S.detail), pairs = cur ? pairHours(cur) : new Set();
+
     $('#w-range').textContent = `${md0(mon)} ~ ${md0(addDays(mon, 6))}`;
     $('#w-prev').disabled = S.week === 0;
     $('#w-next').disabled = S.week === weeks.length - 1;
-    $('#w-legend').innerHTML = ['in', 'out', 'normal', 'off'].map((k) => `<span><i style="background:var(--${k === 'in' ? 'in' : k === 'out' ? 'out' : k === 'normal' ? 'normal' : 'off'}-bg)"></i>${NAME[k]}</span>`).join('');
+    const all = days7.flatMap(outRuns), top = biggest(all);
+    $('#w-headline').innerHTML = all.length
+      ? `이번 주 옮길 작업 <span class="hl">${all.length}건</span><span class="sub">가장 큰 작업: ${md(top.d)} ${hrs(top.s, top.e)} ${shiftTxt(top.kw, '−')}</span>`
+      : '이번 주는 옮길 작업이 없어요<span class="sub">평소 일정대로 가동하면 돼요.</span>';
+    $('#w-days').innerHTML = days7.map((d) => {
+      const has = !!D.days[d], n = outRuns(d).length;
+      return `<button type="button" class="day-chip${n ? ' has-peak' : ''}" data-d="${d}" aria-pressed="${d === S.date}"${has ? '' : ' disabled'}>
+        <span class="dd">${md(d)}</span><span class="pk">${!has ? '자료 없음' : n ? `옮길 작업 ${n}건` : '평소대로'}</span></button>`;
+    }).join('');
+    $('#w-days').querySelectorAll('.day-chip').forEach((b) => { b.onclick = () => { S.date = b.dataset.d; S.detail = null; renderWorker(); }; });
+    showPressed($('#w-days'));
+
+    $('#w-legend').innerHTML = ['out', 'in', 'normal', 'off'].map((k) => `<span><i class="lg-${k}"></i>${NAME[k]}</span>`).join('');
     let html = '<div class="hd"></div>';
-    const days7 = Array.from({ length: 7 }, (_, i) => addDays(mon, i));
     days7.forEach((d, i) => {
       const has = !!D.days[d];
-      html += `<div class="hd${d === S.date ? ' sel' : ''}${has ? '' : ' dim'}">${DOW[i]}<small>${+d.slice(5, 7)}/${+d.slice(8)}</small></div>`;
+      html += `<div class="hd${d === S.date ? ' sel' : ''}${has ? '' : ' dim'}"${has ? ` data-d="${d}" role="button" tabindex="0"` : ''}>${DOW[i]}<small>${md0(d)}</small></div>`;
     });
     html += '<div class="hours">' + Array.from({ length: 24 }, (_, h) => `<div>${pad(h)}</div>`).join('') + '</div>';
     days7.forEach((d, ci) => {
       if (!D.days[d]) { html += '<div class="col nodata">자료 없음</div>'; return; }
-      html += '<div class="col">' + runs(d).map((r, bi) => {
+      html += `<div class="col${d === S.date ? ' today' : ''}">` + runs(d).map((r, bi) => {
         const len = r.e - r.s + 1;
-        const sel = S.detail && S.detail.d === r.d && S.detail.s === r.s;
+        const sel = cur && cur.d === r.d && cur.s === r.s;
+        const pair = cur && cur.d === r.d && !sel && [...pairs].some((h) => h >= r.s && h <= r.e);
         const sub = r.st === 'out' ? shiftTxt(r.kw, '−') : r.st === 'in' ? shiftTxt(r.kw, '+') : '';
-        return `<button type="button" class="blk ${r.st}" aria-pressed="${sel ? 'true' : 'false'}" data-d="${r.d}" data-s="${r.s}" data-e="${r.e}"
+        // 일반 가동·비가동은 이름을 짧은 블록에서 생략해 화면을 덜 복잡하게
+        const quiet = (r.st === 'normal' || r.st === 'off') && len < 3;
+        return `<button type="button" class="blk ${r.st}${pair ? ' pair' : ''}" aria-pressed="${sel ? 'true' : 'false'}" data-d="${r.d}" data-s="${r.s}" data-e="${r.e}"
           style="--ci:${ci};--bi:${bi};top:calc(var(--rowh)*${r.s} + 1px);height:calc(var(--rowh)*${len} - 3px)"
           aria-label="${md(r.d)} ${hh(r.s)}부터 ${hh(r.e + 1)}까지 ${NAME[r.st]} ${sub}">
-          <span class="nm">${NAME[r.st]}${sub ? ' ' + sub : ''}</span>${len > 1 ? `<span class="tm">${pad(r.s)}–${pad(r.e + 1)}시</span>` : ''}</button>`;
+          ${quiet ? '' : len === 1   // 1시간 블록은 한 줄만 들어가서 짧은 이름으로
+            ? `<span class="nm one">${{ out: '자제', in: '배치' }[r.st] || NAME[r.st]}${sub ? ' ' + sub : ''}</span>`
+            : `<span class="nm">${NAME[r.st]}${sub ? ' ' + sub : ''}</span><span class="tm">${hrs(r.s, r.e)}</span>`}</button>`;
       }).join('') + '</div>';
     });
-    $('#tt').innerHTML = html;
-    document.querySelectorAll('#tt .blk').forEach((b) => {
+    const tt = $('#tt');
+    tt.innerHTML = html;
+    tt.classList.toggle('focus', !!cur && (cur.st === 'out' || cur.st === 'in'));
+    tt.querySelectorAll('.blk').forEach((b) => {
       b.onclick = () => { S.detail = { d: b.dataset.d, s: +b.dataset.s, e: +b.dataset.e }; S.date = b.dataset.d; renderWorker(); };
     });
-    renderWorkerDetail();
+    tt.querySelectorAll('.hd[data-d]').forEach((h) => {
+      const go = () => { S.date = h.dataset.d; S.detail = null; renderWorker(); };
+      h.onclick = go;
+      h.onkeydown = (e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); go(); } };
+    });
+    renderWorkerDetail(cur);
   }
   const md0 = (d) => `${+d.slice(5, 7)}/${+d.slice(8)}`;
 
-  function defaultDetail() {
-    const mon = weeks[S.week];
-    let best = null;
-    for (let i = 0; i < 7; i++) {
-      const d = addDays(mon, i);
-      if (!D.days[d]) continue;
-      runs(d).forEach((r) => { if (r.st === 'out' && (!best || r.kw > best.kw)) best = r; });
+  function blockText(r) {
+    const raw = D.days[r.d], adj = adjOf(r.d), hs = [];
+    for (let h = r.s; h <= r.e; h++) hs.push(h);
+    const peak = Math.max.apply(null, hs.map((h) => raw.pred[h]));
+    if (r.st === 'out') {
+      const to = [...pairHours(r)];
+      return { what: '큰 설비 가동·예열 미루기', to: to.length ? `→ ${rangeText(to)}로 옮기기` : '',
+        more: `<p>설비가 한꺼번에 돌아 전력이 몰릴 것으로 예상돼요 (예상 최대 <b>${fmt(peak, 0)}kW</b>, 기준 ${fmt(T, 0)}kW).</p>
+          <p>미룰 수 있는 작업을 옮겨 주세요. 총 ${fmt(hs.reduce((a, h) => a + adj.out[h], 0), 0)}kW만큼 덜어내는 것이 목표예요.</p>` };
     }
-    return best ? { d: best.d, s: best.s, e: best.e } : null;
+    if (r.st === 'in') {
+      const from = [...pairHours(r)];
+      return { what: '미룬 작업 몰아서 하기', to: from.length ? `← ${rangeText(from)}에서 가져오기` : '',
+        more: `<p>예상 <b>${fmt(peak, 0)}kW</b>로 여유가 있어요. 최대 ${fmt(hs.reduce((a, h) => a + adj.in[h], 0), 0)}kW까지 받을 수 있어요.</p>` };
+    }
+    if (r.st === 'off') return { what: '계획상 가동하지 않는 시간', to: '', more: '' };
+    return { what: '평소대로 가동', to: '', more: `<p>예상 최대 ${fmt(peak, 0)}kW로 조정할 필요가 없어요.</p>` };
   }
 
-  function renderWorkerDetail() {
-    const box = $('#w-detail');
-    if (!S.detail || !D.days[S.detail.d] || weeks[S.week] !== mondayOf(S.detail.d)) S.detail = defaultDetail();
-    if (!S.detail) { box.innerHTML = '<p class="empty">이 주에는 전력이 몰리는 시간이 없습니다.</p>'; return; }
-    const { d, s, e } = S.detail, st = hourState(d, s), raw = D.days[d], adj = adjOf(d);
-    const hs = []; for (let h = s; h <= e; h++) hs.push(h);
-    const when = `${md(d)} ${hh(s)}–${hh(e + 1)}`;
-    const peak = Math.max.apply(null, hs.map((h) => raw.pred[h]));
-    let lead, more = '';
-    if (st === 'out') {
-      const src = bySource(d), to = hs.flatMap((h) => (src[h] || []).map((t) => t.to));
-      lead = `<p>전력이 몰리는 시간입니다. 옮길 시간: <b>${rangeText(to)}</b></p>`;
-      more = `<p>이 시간대는 설비가 한꺼번에 돌아 전력이 가장 몰릴 것으로 예상됩니다 (예상 최대 <b>${fmt(peak, 0)}kW</b>, 기준 ${fmt(T, 0)}kW).</p>
-        <p>큰 설비 가동이나 예열처럼 미룰 수 있는 작업을 옮겨 주세요. 총 ${fmt(hs.reduce((a, h) => a + adj.out[h], 0), 0)}kW만큼 덜어내는 것이 목표입니다.</p>`;
-    } else if (st === 'in') {
-      const dst = byDest(d), from = hs.flatMap((h) => (dst[h] || []).map((t) => t.from));
-      lead = `<p>전력 여유가 있는 시간입니다. 작업을 가져올 시간: <b>${rangeText(from)}</b></p>`;
-      more = `<p>예상 <b>${fmt(peak, 0)}kW</b>로 여유가 있어 미룬 작업을 여기에 배치할 수 있습니다. 최대 ${fmt(hs.reduce((a, h) => a + adj.in[h], 0), 0)}kW까지 받을 수 있습니다.</p>`;
-    } else if (st === 'off') {
-      lead = '<p>계획상 가동하지 않는 시간입니다.</p>';
-    } else {
-      lead = `<p>평소대로 가동하세요 (예상 최대 ${fmt(peak, 0)}kW).</p>`;
-    }
-    box.className = '';
-    void box.offsetWidth; // 상세 카드가 바뀔 때마다 등장 효과를 다시 재생
-    box.className = 'card detail';
-    box.innerHTML = `<h3>${when} · ${NAME[st]}</h3>${lead}${more ? acc('이유 자세히 보기', more) : ''}
-      <p class="small">관리자 화면과 같은 계산 결과입니다. 실제 작업 가능 여부는 현장 상황에 맞게 조정하세요.</p>`;
+  // 오른쪽(휴대폰은 위쪽) 패널: 고른 날 할 일 목록. 고른 작업은 펼쳐서 이유를 보여 준다
+  function renderWorkerDetail(cur) {
+    const box = $('#w-detail'), d = S.date;
+    if (!D.days[d]) { box.innerHTML = '<p class="empty">이 주에는 자료가 없어요.</p>'; return; }
+    const items = runs(d).filter((r) => r.st === 'out' || r.st === 'in');
+    const sel = (r) => cur && cur.s === r.s;
+    const item = (r) => {
+      const t = blockText(r), amt = r.st === 'out' ? shiftTxt(r.kw, '−') : shiftTxt(r.kw, '+');
+      return `<li class="todo ${r.st}${sel(r) ? ' sel' : ''}"><button type="button" data-s="${r.s}" data-e="${r.e}" aria-expanded="${sel(r)}">
+          <span class="tm">${hrs(r.s, r.e)}</span>
+          <span class="what">${t.what}<small>${t.to}</small></span>
+          <span class="amt">${amt}</span></button>
+          ${sel(r) && t.more ? `<div class="todo-more">${t.more}</div>` : ''}</li>`;
+    };
+    const other = cur && cur.st !== 'out' && cur.st !== 'in' ? blockText(cur) : null;
+    box.innerHTML = `<h2>${md(d)} 할 일</h2>
+      <p class="muted">${D.days[d].day_type} · ${items.length ? `옮길 작업 ${items.filter((r) => r.st === 'out').length}건` : '평소대로 가동하면 돼요'}</p>
+      ${other ? `<div class="todo-other"><b>${hrs(cur.s, cur.e)} · ${other.what}</b>${other.more}</div>` : ''}
+      ${items.length ? `<ol class="todos">${items.map(item).join('')}</ol>` : '<p class="empty">이 날은 전력이 몰리는 시간이 없어요.</p>'}
+      <p class="small">관리자 화면과 같은 계산 결과예요. 실제 작업 가능 여부는 현장 상황에 맞게 조정하세요.</p>`;
+    box.querySelectorAll('.todo > button').forEach((b) => {
+      b.onclick = () => {
+        const same = cur && cur.s === +b.dataset.s;
+        S.detail = same ? { d, s: -1, e: -1 } : { d, s: +b.dataset.s, e: +b.dataset.e };   // 다시 누르면 접기
+        renderWorker();
+      };
+    });
   }
 
   // ── 챗봇 ─────────────────────────────────────────────
   const log = $('#chat-log');
+  const BOT_ICON = '<svg viewBox="0 0 24 24" width="14" height="14" aria-hidden="true"><path d="M13 2 4 14h7l-1 8 9-12h-7l1-8Z" fill="currentColor"/></svg>';
   function addMsg(who, html, acts) {
+    $('#chat-empty').hidden = true;   // 첫 질문부터는 빈 화면 안내 대신 대화와 아래 칩을 보여 준다
+    $('#chips').hidden = false;
+    const row = document.createElement('div');
+    row.className = 'msg-row ' + who;
+    if (who === 'bot') row.innerHTML = `<span class="avatar sm">${BOT_ICON}</span>`;
     const el = document.createElement('div');
     el.className = 'msg ' + who;
     if (who === 'user') el.textContent = html; else el.innerHTML = html;
@@ -629,9 +738,12 @@
       acts.forEach((x) => { const b = document.createElement('button'); b.type = 'button'; b.textContent = x.label; b.onclick = x.fn; a.appendChild(b); });
       el.appendChild(a);
     }
-    log.appendChild(el);
+    row.appendChild(el);
+    log.appendChild(row);
     log.scrollTop = log.scrollHeight;
+    updateCtx();
   }
+  const updateCtx = () => { $('#chat-ctx').innerHTML = `기준 날짜 <b>${md(S.date)}</b>`; };
   const goto = (view, label) => ({ label, fn: () => setView(view) });
 
   function rawDate(t) {
@@ -765,14 +877,47 @@
     addMsg('bot', html, a);
   }
 
+  // 빈 화면 추천 질문: 아이콘 + 질문 + 무엇을 알려 주는지
+  const ICO = {
+    peak: '<path d="M3 17l5-6 4 4 8-9" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>',
+    cal: '<rect x="4" y="5" width="16" height="15" rx="3" fill="none" stroke="currentColor" stroke-width="2"/><path d="M4 10h16M9 3v4M15 3v4" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>',
+    why: '<circle cx="12" cy="12" r="9" fill="none" stroke="currentColor" stroke-width="2"/><path d="M9.5 9.5a2.5 2.5 0 1 1 3.5 2.3c-.7.3-1 .9-1 1.7M12 17h.01" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>',
+    won: '<circle cx="12" cy="12" r="9" fill="none" stroke="currentColor" stroke-width="2"/><path d="M7.5 9l1.5 6 3-5 3 5 1.5-6M7 12h10" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/>',
+    plan: '<path d="M8 6h12M8 12h12M8 18h12M4 6h.01M4 12h.01M4 18h.01" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"/>',
+    warn: '<path d="M12 4 2.5 20h19L12 4Z" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round"/><path d="M12 10v4M12 17h.01" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>',
+  };
   function initChat() {
-    addMsg('bot', `<p>안녕하세요, 자원 최적화 에이전트예요. 피크 전력을 줄이는 일정 조정안을 설명해 드려요.</p><p>선택된 날짜는 ${dayLine(S.date)}예요. 날짜를 말하면 바꿔 드려요 (예: "9/10").</p>${PA ? '<p>9/15 이후 날짜나 "주간 계획"을 물으면 1주 전 예측으로 만든 계획 수정안으로 답해요.</p>' : ''}`, []);
+    const sugs = [
+      ['peak', '피크 위험 시간 알려줘', '전력이 몰리는 시간과 경보'],
+      ['cal', '일정 추천해줘', '옮길 작업과 받을 시간'],
+      ['why', '왜 옮기는 거야?', '조정 이유와 근거'],
+      ['won', '절감 효과는?', '기본요금 절감액 요약'],
+    ].concat(PA ? [['plan', '다음 주 계획 수정안', '1주 전 예측으로 만든 수정안']] : [], [['warn', '한계가 뭐야?', '계산 가정과 주의할 점']]);
+    $('#chat-sugs').innerHTML = sugs.map(([ic, q, sub]) => `<button type="button" class="sug" data-q="${q}">
+      <span class="ic ${ic}"><svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true">${ICO[ic]}</svg></span>
+      <span><b>${q}</b><small>${sub}</small></span></button>`).join('');
+    document.querySelectorAll('#chat-sugs .sug').forEach((b) => { b.onclick = () => ask(b.dataset.q); });
     const chips = ['피크 위험 시간 알려줘', '일정 추천해줘', '왜 옮기는 거야?', '절감 효과는?', '한계가 뭐야?'].concat(PA ? ['다음 주 계획 수정안', '9/17 계획 어떻게 바꿔?'] : []);
     $('#chips').innerHTML = chips.map((c) => `<button type="button">${c}</button>`).join('');
     document.querySelectorAll('#chips button').forEach((b) => { b.onclick = () => ask(b.textContent); });
-    $('#chat-form').onsubmit = (e) => { e.preventDefault(); const v = $('#chat-input').value.trim(); if (v) { $('#chat-input').value = ''; ask(v); } };
+    const inp = $('#chat-input'), send = $('#chat-send');
+    inp.oninput = () => { send.disabled = !inp.value.trim(); };
+    $('#chat-form').onsubmit = (e) => { e.preventDefault(); const v = inp.value.trim(); if (v) { inp.value = ''; send.disabled = true; ask(v); } };
+    updateCtx();
   }
-  function ask(text) { addMsg('user', text); setTimeout(() => answer(text), 120); }
+  // 답하기 전 잠깐 '입력 중' 점을 보여 준다 (동작 줄이기 설정이면 짧게)
+  let busy = false;
+  function ask(text) {
+    if (busy) return;
+    busy = true;
+    addMsg('user', text);
+    const typing = document.createElement('div');
+    typing.className = 'msg-row bot typing';
+    typing.innerHTML = `<span class="avatar sm">${BOT_ICON}</span><div class="msg bot"><i></i><i></i><i></i></div>`;
+    log.appendChild(typing);
+    log.scrollTop = log.scrollHeight;
+    setTimeout(() => { typing.remove(); busy = false; answer(text); }, REDUCE ? 120 : 520);
+  }
 
   // ── 주간 계획 (13 1주 전 예측 + 14 계획 수정 제안) ─────────
   const PA = D.plan_advice;
@@ -1220,8 +1365,8 @@
     s += `<line x1="${L}" x2="${W - R}" y1="${y(T)}" y2="${y(T)}" style="stroke:var(--text-3)" stroke-width="1.2" stroke-dasharray="5 4"/>`;
     s += `<text style="${HALO}" x="${W - R}" y="${y(T) - 5}" text-anchor="end">피크 기준 ${fmt(T, 0)}kW</text>`;
     if (hasAct) s += `<path d="${path(H0.actual.map((v) => (v === null ? 0 : v)))}" fill="none" style="stroke:var(--text-3)" stroke-width="1.2" stroke-dasharray="2 3"/>`;
-    s += `<path d="${path(H0.pred_before)}" fill="none" style="stroke:var(--orange)" stroke-width="2" stroke-linejoin="round"/>`;
-    s += `<path d="${path(H0.pred_after)}" fill="none" style="stroke:var(--blue)" stroke-width="2" stroke-linejoin="round"/>`;
+    s += `<path d="${path(H0.pred_before)}" fill="none" style="stroke:var(--orange)" stroke-width="2.5" stroke-linejoin="round"/>`;
+    s += `<path d="${path(H0.pred_after)}" fill="none" style="stroke:var(--blue)" stroke-width="2.75" stroke-linejoin="round"/>`;
     s += `<line id="pxh" x1="0" x2="0" y1="${Tp}" y2="${Tp + ih}" style="stroke:var(--text-3)" stroke-width="1" visibility="hidden"/>`;
     s += `<circle id="pd1" r="4" style="fill:var(--orange);stroke:var(--surface)" stroke-width="2" visibility="hidden"/><circle id="pd2" r="4" style="fill:var(--blue);stroke:var(--surface)" stroke-width="2" visibility="hidden"/>`;
     s += `<rect id="pov" x="${L}" y="${Tp}" width="${iw}" height="${ih}" fill="transparent"/></svg>`;
@@ -1363,6 +1508,7 @@
     document.querySelectorAll('.settings .m4-only').forEach((el) => { el.hidden = v === 'plan'; });
     if (v === 'admin') renderAdmin();
     if (v === 'plan') renderPlan();
+    if (v === 'chat') updateCtx();
     if (v === 'worker') { S.week = Math.max(0, weeks.indexOf(mondayOf(S.date))); S.detail = null; renderWorker(); }
     try { history.replaceState(null, '', '#' + v); } catch (e) { /* 무시 */ }
     window.scrollTo({ top: 0 });
@@ -1376,7 +1522,10 @@
   function init() {
     initSettings();
     document.querySelectorAll('.tabs button').forEach((b) => { b.onclick = () => setView(b.dataset.view); });
-    $('#a-date').onchange = (e) => { S.date = e.target.value; renderAdmin(); };
+    $('#a-show-move').checked = S.showMove;
+    $('#a-show-hs').checked = S.showHs;
+    $('#a-show-move').onchange = (e) => { S.showMove = e.target.checked; store.set('showMove', S.showMove ? '1' : '0'); renderChart(); };
+    $('#a-show-hs').onchange = (e) => { S.showHs = e.target.checked; store.set('showHs', S.showHs ? '1' : '0'); renderChart(); };
     $('#a-table-toggle').onclick = (e) => {
       const open = $('#a-table').hidden;
       $('#a-table').hidden = !open;
