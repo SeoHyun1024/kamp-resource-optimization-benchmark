@@ -26,12 +26,18 @@
   // ── 상태 ─────────────────────────────────────────────
   const m0 = /^r(\d+)_m(\d+)$/.exec(D.meta.default);
   const peakHoursOf = (d) => D.days[d].actual.filter((v) => v >= T).length;
+  // 기본요금 단가: tariff.json -> 12_build_report.py -> agent_data.js (단가가 바뀌면 tariff.json만 고침)
+  const TARIFF = D.meta.tariff;
+  const tariffTag = () => `<span class="tag" title="${TARIFF.label}">추정 종별</span>`;
+  // 요금적용전력은 직전 12개월 최대수요라 한 주를 낮춰도 바로 줄지 않는다 -> "12개월 유지 시 추정"
+  const tariffFoot = (what) => `${what} × ${S.price.toLocaleString('ko-KR')}원 · 12개월 유지 시 추정` +
+    (S.price === TARIFF.price ? ` (${TARIFF.basis.replace(' · ', ', ')})` : ' (입력한 단가)');
   const S = {
     view: 'admin',
     date: dates.reduce((a, b) => (peakHoursOf(b) > peakHoursOf(a) ? b : a), dates[0]),
     share: +m0[1] / 100,
     margin: +m0[2],
-    price: +(store.get('price') || 8000),
+    price: +(store.get('price') || TARIFF.price),
     week: 0,
     detail: null,
     pweek: null,  // 주간 계획 탭의 '주' (group). initPlan에서 정함
@@ -110,12 +116,14 @@
     $('#s-share').value = String(S.share);
     $('#s-margin').value = String(S.margin);
     $('#s-price').value = S.price;
+    $('#s-price-tag').title = TARIFF.label;
+    $('#tariff-note').textContent = `기본요금 단가 기본값 ${TARIFF.price.toLocaleString('ko-KR')}${TARIFF.unit}은 ${TARIFF.label.replace(' (추정)', '')}로 추정한 값입니다(${TARIFF.basis.replace(' · ', ', ')}).`;
     $('#s-share').onchange = (e) => { S.share = +e.target.value; S.detail = null; renderAll('이동 가능 비율을 바꿨습니다'); };
     $('#s-margin').onchange = (e) => { S.margin = +e.target.value; S.detail = null; renderAll('안전 마진을 바꿨습니다'); };
     $('#s-price').oninput = (e) => {
       const v = Math.max(0, +e.target.value || 0);
       S.price = v; store.set('price', v);
-      renderKpis(false);
+      if (S.view === 'admin') { if (WK) renderWeekKpis(false); else renderKpis(false); }   // 주간 피드백이면 주간 카드
       if (S.view === 'plan' && PA) renderPlanKpis();
     };
   }
@@ -137,9 +145,9 @@
       <div class="kpi"><div class="label">피크일의 일 최대 전력</div>
         <div class="value">−<span class="cu" data-from="0" data-to="${s.avg_daily_max_cut_on_peak_days}" data-dec="1">${fmt(s.avg_daily_max_cut_on_peak_days)}</span><span class="from">kW</span></div>
         <div class="delta">평균</div><div class="foot">피크가 있던 ${s.peak_days}일 기준</div></div>
-      <div class="kpi"><div class="label">기본요금 절감 <span class="tag">예시 단가</span></div>
+      <div class="kpi"><div class="label">기본요금 절감 ${tariffTag()}</div>
         <div class="value"><span class="cu" data-from="0" data-to="${Math.round(month)}" data-dec="0" data-suf="원">${won(month)}</span><span class="from">/월</span></div>
-        <div class="delta">연 ${won(month * 12)}</div><div class="foot">최대수요 절감 × 단가 ${S.price.toLocaleString('ko-KR')}원/kW·월</div></div>`;    if (animate) countUp($('#kpis'));
+        <div class="delta">연 ${won(month * 12)}</div><div class="foot">${tariffFoot('최대수요 절감')}</div></div>`;    if (animate) countUp($('#kpis'));
   }
 
   function renderCallout() {
@@ -365,7 +373,7 @@
       acc('안전 마진은 어떻게 정했나요?', `<p>M3는 일 최대전력을 낮게 예측합니다(편향: 7월 ${b['2021-07']}, 8월 ${b['2021-08']}, test ${b.test}kW). 기본 ${D.meta.margins[1]}kW는 CV 두 달의 편향에서 정했고, test 결과를 보고 고르지 않았습니다.</p>`) +
       acc('예측은 얼마나 정확한가요?', `<ul><li>M3 test MAE ${m.m3_mae}kW, 일 최대 MAE ${m.m3_daily_max_mae}kW</li>
         <li>M2 주의 단계 정밀도 ${m.m2_alert.precision}, 재현율 ${m.m2_alert.recall}</li></ul>`) +
-      acc('기본요금은 어떻게 계산하나요?', '<p>한국전력은 15분 단위 최대수요전력 중 가장 높은 값을 기준으로 요금을 부과합니다(가이드북). 절감액 = 최대수요 절감(kW) × 단가 × 12개월. 단가는 계약 조건마다 달라서 예시값을 직접 바꿔 입력하세요.</p>') +
+      acc('기본요금은 어떻게 계산하나요?', `<p>한국전력은 15분 단위 최대수요전력 중 가장 높은 값을 기준으로 요금을 부과합니다(가이드북). 절감액 = 최대수요 절감(kW) × 단가 × 12개월. 기본 단가 ${TARIFF.price.toLocaleString('ko-KR')}${TARIFF.unit}은 ${TARIFF.label.replace(' (추정)', '')}로 추정한 값이라(${TARIFF.basis.replace(' · ', ', ')}, 데이터에 계약 종별이 없음), 실제 계약이 다르면 직접 바꿔 입력하세요.</p>`) +
       acc('반영하지 못한 것', '<p>작업별 이동 가능 여부, 점심·교대 시간, 인원 배치는 데이터에 없어 반영하지 않았습니다. 낮 부하를 새벽·야간으로 옮기면 야간 인건비(데이터의 인건비 비율 1.5)가 늘 수 있는데 이 비용도 계산에 넣지 않았습니다. 받는 시간이 실제로 작업 가능한지는 담당자가 확인해야 합니다.</p>') +
       acc('시뮬레이션 주의', `<p>${D.meta.notes.join(' ')}</p>`);
   }
@@ -429,10 +437,10 @@
         <div class="value"><span class="cu" data-from="${prev ? prev.m3.mae : w.m3.mae}" data-to="${w.m3.mae}" data-dec="1">${fmt(w.m3.mae)}</span><span class="from">kW</span></div>
         <div class="delta">${dMae === null ? '첫 주' : `지난주 대비 ${dMae <= 0 ? '−' : '+'}${fmt(Math.abs(dMae))}kW`}</div>
         <div class="trio">가동일 일 최대 ${w.m3.daily_max_bias === null ? '-' : `<b>${w.m3.daily_max_bias < 0 ? '' : '+'}${fmt(w.m3.daily_max_bias)}kW</b> ${w.m3.daily_max_bias < 0 ? '낮게' : '높게'} 예측`}</div></div>
-      <div class="kpi"><div class="label">기본요금 절감 <span class="tag">예시 단가</span></div>
+      <div class="kpi"><div class="label">기본요금 절감 ${tariffTag()}</div>
         <div class="value"><span class="cu" data-from="0" data-to="${Math.round(Math.max(0, cutAi) * S.price)}" data-dec="0" data-suf="원">${won(Math.max(0, cutAi) * S.price)}</span><span class="from">/월</span></div>
         <div class="delta">AI 계획 기준</div>
-        <div class="trio">사후 최선이면 월 <b>${won(Math.max(0, cutHs) * S.price)}</b> · 단가 ${S.price.toLocaleString('ko-KR')}원/kW·월</div></div>`;
+        <div class="trio">사후 최선이면 월 <b>${won(Math.max(0, cutHs) * S.price)}</b></div><div class="foot">${tariffFoot('최대수요 절감')}</div></div>`;
     if (animate) countUp($('#kpis'));
   }
 
@@ -700,7 +708,8 @@
     return `<p>피크 시간 ${s.peak_hours_before} → <b>${s.peak_hours_after}</b>시간, 기간 최대수요 <b>−${fmt(cut)}kW</b>예요.</p>` +
       acc('금액과 이유 자세히 보기', `<p>현재 설정(이동 ${Math.round(S.share * 100)}%, 마진 ${S.margin}kW) 기준이에요.</p><ul>
         <li>기간 최대수요 ${fmt(s.period_max_before)} → ${fmt(s.period_max_after)}kW</li>
-        <li>예시 단가 ${S.price.toLocaleString('ko-KR')}원/kW·월이면 월 <b>${won(cut * S.price)}</b>, 연 ${won(cut * S.price * 12)}</li></ul>
+        <li>${S.price === TARIFF.price ? `${TARIFF.label} 단가 ${S.price.toLocaleString('ko-KR')}원/kW·월(${TARIFF.basis.replace(' · ', ', ')})` : `입력한 단가 ${S.price.toLocaleString('ko-KR')}원/kW·월`}이면 월 <b>${won(cut * S.price)}</b>, 연 ${won(cut * S.price * 12)} (12개월 유지 시 추정)</li>
+        <li>요금적용전력은 직전 12개월 중 최대수요전력이라, 한 주 피크를 낮췄다고 바로 줄지 않아요. 또 모델은 1시간 평균, 요금은 15분 평균 기준이라 근사치예요.</li></ul>
         ${WK ? `<p>주별로 보면 ${wkLabel(wk())} 주는 AI 계획 ${fmt(wkSc().ai.week_max)}kW, 사후 최선 ${fmt(wkSc().hs.week_max)}kW예요. 관리자 화면에서 주를 바꿔 볼 수 있어요.</p>` : '<p>최대수요 절감이 작은 이유는 가장 높았던 날을 하루 전 예측이 놓쳤기 때문이에요.</p>'}`);
   }
   const ansLimits = () => '<p>시뮬레이션이라 실제 운영 결과와 다를 수 있어요.</p>' + acc('꼭 알아 둘 점 자세히 보기', `<ul>
@@ -1174,9 +1183,9 @@
         <div class="value"><span class="from">${s.actual_peak_hours}</span><span class="arrow">→</span><span class="cu" data-from="${s.actual_peak_hours}" data-to="${s.actual_peak_hours_after_est}" data-dec="0">${s.actual_peak_hours_after_est}</span><span class="from">시간</span></div>
         <div class="delta">추정</div><div class="foot">실제 전력 + 모델이 본 변화량</div></div>`;
     } else {
-      k += `<div class="kpi"><div class="label">기본요금 절감 <span class="tag">예시 단가</span></div>
+      k += `<div class="kpi"><div class="label">기본요금 절감 ${tariffTag()}</div>
         <div class="value"><span class="cu" data-from="0" data-to="${Math.round(month)}" data-dec="0" data-suf="원">${won(month)}</span><span class="from">/월</span></div>
-        <div class="delta">연 ${won(month * 12)}</div><div class="foot">주간 예측 최대 절감 × 단가 ${S.price.toLocaleString('ko-KR')}원/kW·월</div></div>`;
+        <div class="delta">연 ${won(month * 12)}</div><div class="foot">${tariffFoot('주간 예측 최대 절감')}</div></div>`;
     }
     $('#p-kpis').innerHTML = k;
     countUp($('#p-kpis'));

@@ -43,15 +43,13 @@ import preprocessing as pp
 
 X_GRID = [0.05, 0.10, 0.20]
 POWER_STEP = 1.0   # 전력 값 단위(kW). 받는 시간은 피크 기준보다 한 단위 아래까지만 채운다 (피크는 기준 이상)
-RATCHET_MONTHS = [12, 1, 2, 7, 8, 9]   # 요금적용전력 산정에 들어가는 달 (+ 당월), 한전 기본공급약관 제68조
-BASE_RATE = 8320                       # 기본요금 단가 (원/kW), 산업용전력(을) 고압A 선택Ⅱ
-BASE_RATE_RANGE = (6490, 9810)         # 산업용 고압A 최저(갑 선택Ⅰ)·최고(을 선택Ⅲ) 단가 (원/kW)
-TARIFF_CONFIRMED = False               # 단가 자체는 요금표로 확인. 이 공장이 그 요금제인지는 추정이라 False
-TARIFF_SOURCE = ("한국전력공사 전기요금표(산업용) https://cyber.kepco.co.kr/ckepco/front/jsp/CY/E/E/CYEEHP00103.jsp : "
-                 "산업용전력(을) 고압A 선택Ⅱ 기본요금 8,320원/kW. 요금제는 추정: 데이터의 전기요금 109.8/167.2/191.6이 "
-                 "이 요금제 최대부하 단가(2013.11.21 시행 109.3/166.7/191.1)보다 각각 0.5 높은 같은 묶음")
-BILLING_SOURCE = ("한국전력공사 기본공급약관 제68조(요금적용전력의 결정) "
-                  "https://cyber.kepco.co.kr/ckepco/front/jsp/CY/D/C/CYDCHP00108.jsp")
+TARIFF = pp.load_tariff()                # 기본요금 단가·요금적용전력 기준 (tariff.json, 단가가 바뀌면 그 파일만 고침)
+RATCHET_MONTHS = TARIFF["ratchet_months"]  # 요금적용전력 산정에 들어가는 달 (+ 당월)
+BASE_RATE = TARIFF["price"]                # 기본요금 단가 (원/kW·월)
+BASE_RATE_RANGE = tuple(TARIFF["range"])   # 산업용 고압A 단가 범위 (원/kW·월)
+TARIFF_CONFIRMED = TARIFF["confirmed"]     # 이 공장의 종별이 확인된 것인지 (추정이면 False)
+TARIFF_SOURCE = f"{TARIFF['label']}, {TARIFF['basis']}. {TARIFF['source']}"
+BILLING_SOURCE = TARIFF["billing_source"]
 M3_CUTOFF_GRID = list(range(150, 180))
 RULES = ["RNN 단독", "RF 단독", "AND", "OR"]                    # 09_peak_alert.py의 후보와 같음
 CEILING = {"after": "완벽 예측 (1시간 전)", "any": "완벽 예측 (하루 전)"}   # 같은 방향 제약의 상한

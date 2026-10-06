@@ -35,7 +35,7 @@
     <p>실제 운영 결과가 아닌 <strong>2021-07~09 데이터 시뮬레이션</strong>입니다.</p>
     <details class="acc">
       <summary>자세히 보기</summary>
-      <div class="acc-body">2021-07-07~09-14를 한 주씩 되돌려 본 결과입니다. 각 주는 그 주가 시작되기 전날까지의 데이터로 모델을 다시 학습해 예측했습니다(실제 운영과 같은 조건). 이동 가능 비율과 기본요금 단가는 데이터에 없는 값이라 직접 정하는 입력값이고, 기본요금 단가는 예시값입니다.</div>
+      <div class="acc-body">2021-07-07~09-14를 한 주씩 되돌려 본 결과입니다. 각 주는 그 주가 시작되기 전날까지의 데이터로 모델을 다시 학습해 예측했습니다(실제 운영과 같은 조건). 이동 가능 비율과 기본요금 단가는 데이터에 없는 값이라 직접 정하는 입력값입니다. <span id="tariff-note"></span></div>
     </details>
   </div>
 
@@ -46,7 +46,7 @@
     <label class="m4-only">안전 마진
       <select id="s-margin"></select>
     </label>
-    <label class="price">기본요금 단가 <span class="tag">예시값</span>
+    <label class="price">기본요금 단가 (2021년 기준) <span class="tag" id="s-price-tag">추정 종별</span>
       <span class="input-unit"><input id="s-price" type="number" min="0" step="100" inputmode="numeric"> 원/kW·월</span>
     </label>
   </section>

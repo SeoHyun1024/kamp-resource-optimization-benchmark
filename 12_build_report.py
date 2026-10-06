@@ -19,6 +19,8 @@ import os
 import sys
 from datetime import date
 
+import preprocessing as pp
+
 HERE = os.path.dirname(os.path.abspath(__file__))
 RES = os.path.join(HERE, "results")
 OUT = os.path.join(HERE, "web", "data", "agent_data.js")
@@ -155,6 +157,7 @@ def main():
                 "이동 가능 비율·기본요금 단가는 데이터에 없는 운영 조건이므로 입력값입니다.",
             ]),
             "feedback": bool(fb),
+            "tariff": pp.load_tariff(),        # 기본요금 단가 (tariff.json). 웹 화면은 이 값을 기본 단가로 쓴다
             "excluded_days": fb["meta"]["excluded_days"] if fb else [],
         },
         "days": out_days,

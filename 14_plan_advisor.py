@@ -69,7 +69,8 @@ PRECEDENT_MIN_SHARE = 0.05 # 비가동 시간을 켤 수 있는 최소 과거 �
 MAX_ITER = 150
 MIN_GAIN = 0.3             # 이동 하나가 점수를 이만큼 이상 줄여야 채택 (의미 없는 이동 방지)
 DAY_STEP = 0.10            # 다른 날로 한 번에 옮기는 양 = 보내는 날 하루 생산량의 10%
-DEFAULT_PRICE = 8000       # 기본요금 예시 단가 (원/kW·월, 웹 화면 기본값과 같음)
+TARIFF = pp.load_tariff()  # 기본요금 단가 설정 (tariff.json, 웹 화면과 같은 값)
+DEFAULT_PRICE = TARIFF["price"]
 
 
 def fmt_t(t: pd.Timestamp) -> str:
@@ -420,7 +421,9 @@ def write_outputs(ctx, plan, revised, pred0, pred1, moves, out_dir, filled, allo
     if actual is not None:
         L.append(f"- 실제 주간 최대: {s['actual_week_max']:.0f} → 수정 후 추정 {s['actual_week_max_after_est']:.0f} kW, "
                  f"실제 피크 시간(≥{thr:g}): {s['actual_peak_hours']} → 추정 {s['actual_peak_hours_after_est']}시간")
-    L.append(f"- 기본요금 (예시 단가 {price:,}원/kW·월): 주간 예측 최대가 그대로 요금 기준이 된다고 보면 월 {s['monthly_saving_est']:,.0f}원")
+    basis = f"{TARIFF['label']}, {TARIFF['basis'].replace(' · ', ', ')}" if price == DEFAULT_PRICE else "입력한 단가"
+    L.append(f"- 기본요금 (단가 {price:,}원/kW·월, {basis}): 주간 예측 최대가 12개월 동안 그대로 요금 기준이 된다고 보면 월 "
+             f"{s['monthly_saving_est']:,.0f}원 (요금적용전력은 직전 12개월 최대수요라 한 주만 낮춰서는 바로 줄지 않음)")
     if s["out_of_range_days"]:
         L.append(f"- **주의**: {', '.join(pd.Timestamp(d).strftime('%m/%d') for d in s['out_of_range_days'])}은 계획 생산량이 과거 하루 생산량의 "
                  f"99% 분위수({s['day_prod_p99']:,.0f})보다 많습니다. 학습에 거의 없던 물량이라 모델이 생산량 변화에 둔감하고, "
@@ -760,7 +763,7 @@ def main():
     ap.add_argument("--allow-new-hours", action="store_true", help="선례가 있는 비가동 시간을 켜서 가동 구간 연장 (실험적)")
     ap.add_argument("--max-move-share", type=float, default=0.5)
     ap.add_argument("--window", type=int, default=6, help="같은 날 안에서 옮길 수 있는 거리(시간)")
-    ap.add_argument("--price", type=int, default=DEFAULT_PRICE, help="기본요금 예시 단가 (원/kW·월)")
+    ap.add_argument("--price", type=int, default=DEFAULT_PRICE, help=f"기본요금 단가 (원/kW·월, 기본값은 tariff.json: {DEFAULT_PRICE:,} = {TARIFF['label']})")
     ap.add_argument("--out", help="결과 폴더 (기본 plans/out/<계획 파일 이름>)")
     ap.add_argument("--web-examples", action="store_true", help="웹 화면용 예시 4개 생성 -> plans/out/web/ (12가 읽음)")
     ap.add_argument("--publish", nargs="?", const="", metavar="이름",
